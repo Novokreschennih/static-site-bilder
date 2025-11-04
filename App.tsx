@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { optimizeFileName } from './services/geminiService';
@@ -109,7 +108,8 @@ const App: React.FC = () => {
     
     useEffect(() => {
         const updatePreviews = async () => {
-            const fileMap = new Map(files.map(f => [f.path, f]));
+            // FIX: Explicitly type `fileMap` to resolve a TypeScript type inference issue.
+            const fileMap: Map<string, SiteFile> = new Map(files.map(f => [f.path, f]));
             const updatedHtmlFiles = await Promise.all(htmlFiles.map(async (hf) => {
                  if (hf.id === selectedFileId) {
                      URL.revokeObjectURL(hf.previewUrl);
@@ -273,7 +273,7 @@ const App: React.FC = () => {
                                     {notification.message}
                                 </div>
                             )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {htmlFiles.map(file => (
                                     <div key={file.id} className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${selectedFileId === file.id ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
                                         <div className="p-4">
