@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { optimizeFileName } from './services/geminiService';
-import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner } from './components/icons';
+import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, ExpandIcon } from './components/icons';
 import Modal from './components/Modal';
 import JSZip from 'jszip';
 import saveAs from 'file-saver';
@@ -15,6 +15,7 @@ const App: React.FC = () => {
     const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
+    const [fullscreenPreviewFile, setFullscreenPreviewFile] = useState<HtmlFile | null>(null);
     
     const deploymentInstructions = useMemo(() => getDeploymentInstructions(), []);
 
@@ -277,13 +278,20 @@ const App: React.FC = () => {
                                 {htmlFiles.map(file => (
                                     <div key={file.id} className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${selectedFileId === file.id ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
                                         <div className="p-4">
-                                            <div className="aspect-video bg-gray-700 rounded-md overflow-hidden mb-3">
+                                            <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
                                                <iframe
                                                     src={file.previewUrl}
                                                     className="w-full h-full border-0"
                                                     sandbox="allow-scripts"
                                                     title={`Preview of ${file.name}`}
                                                 />
+                                                <button
+                                                    onClick={() => setFullscreenPreviewFile(file)}
+                                                    className="absolute top-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    aria-label="Развернуть на весь экран"
+                                                >
+                                                    <ExpandIcon className="w-4 h-4" />
+                                                </button>
                                             </div>
                                             <input
                                                 type="text"
@@ -379,6 +387,23 @@ const App: React.FC = () => {
                 <div className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: deploymentInstructions.replace(/\n/g, '<br />').replace(/`([^`]+)`/g, '<code>$1</code>') }}>
                 </div>
             </Modal>
+
+            {fullscreenPreviewFile && (
+                <Modal 
+                    isOpen={!!fullscreenPreviewFile} 
+                    onClose={() => setFullscreenPreviewFile(null)} 
+                    title={`Предпросмотр: ${fullscreenPreviewFile.name}`}
+                    size="large"
+                >
+                    <iframe
+                        key={fullscreenPreviewFile.id}
+                        src={fullscreenPreviewFile.previewUrl}
+                        className="w-full h-full border-0 rounded-md bg-white"
+                        sandbox="allow-scripts"
+                        title={`Fullscreen Preview of ${fullscreenPreviewFile.name}`}
+                    />
+                </Modal>
+            )}
         </div>
     );
 };

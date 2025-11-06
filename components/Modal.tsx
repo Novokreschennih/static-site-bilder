@@ -1,4 +1,3 @@
-
 import React, { ReactNode } from 'react';
 import { CloseIcon } from './icons';
 
@@ -7,10 +6,15 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  size?: 'default' | 'large';
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'default' }) => {
   if (!isOpen) return null;
+
+  const sizeClass = size === 'large' 
+    ? 'w-11/12 max-w-screen-xl h-[90vh]' 
+    : 'w-11/12 max-w-2xl max-h-[90vh]';
 
   return (
     <div 
@@ -20,7 +24,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
       role="dialog"
     >
       <div 
-        className="bg-gray-800 rounded-lg shadow-xl w-11/12 max-w-2xl max-h-[90vh] flex flex-col transform transition-all duration-300 scale-95"
+        className={`bg-gray-800 rounded-lg shadow-xl flex flex-col transform transition-all duration-300 scale-95 ${sizeClass}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center p-4 border-b border-gray-700">
@@ -33,7 +37,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             <CloseIcon className="w-6 h-6" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto">
+        <div className="p-6 overflow-y-auto flex-grow">
           {children}
         </div>
       </div>
