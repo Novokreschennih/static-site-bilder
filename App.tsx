@@ -12,11 +12,23 @@ const App: React.FC = () => {
     const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState<Record<string, boolean>>({ optimizing: false, zipping: false });
-    const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' } | null>(null);
+    const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
     const [fullscreenPreviewFile, setFullscreenPreviewFile] = useState<HtmlFile | null>(null);
     
+    const [apiKey, setApiKey] = useState<string>('');
+    const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+    const [apiKeyInput, setApiKeyInput] = useState('');
+
+    useEffect(() => {
+        const storedKey = localStorage.getItem('geminiApiKey');
+        if (storedKey) {
+            setApiKey(storedKey);
+            setApiKeyInput(storedKey);
+        }
+    }, []);
+
     const deploymentInstructions = useMemo(() => getDeploymentInstructions(), []);
 
     const resetState = () => {
@@ -150,19 +162,36 @@ const App: React.FC = () => {
     };
 
     const handleOptimizeNames = async () => {
+        setNotification(null);
+
+        if (!apiKey) {
+            setIsApiKeyModalOpen(true);
+            return;
+        }
+
         setIsLoading(prev => ({ ...prev, optimizing: true }));
         try {
-            const optimizedFiles = await Promise.all(htmlFiles.map(async file => {
+            const promises = htmlFiles.map(async file => {
                 if (file.isMain) return file;
-                try {
-                    const newName = await optimizeFileName(file.content);
-                    return { ...file, newFileName: `${newName}.html` };
-                } catch (e) {
-                    console.error(`Could not optimize name for ${file.name}`, e);
-                    return file;
-                }
-            }));
+                const newName = await optimizeFileName(file.content, apiKey);
+                return { ...file, newFileName: `${newName}.html` };
+            });
+            const optimizedFiles = await Promise.all(promises);
             setHtmlFiles(optimizedFiles);
+            setNotification({ message: 'Имена файлов успешно оптимизированы!', type: 'success' });
+        } catch (error) {
+            console.error("Error during filename optimization:", error);
+            if (error instanceof Error) {
+                setNotification({ message: error.message, type: 'error' });
+                if (error.message.includes('Неверный API ключ')) {
+                    setApiKey('');
+                    localStorage.removeItem('geminiApiKey');
+                    setApiKeyInput('');
+                    setIsApiKeyModalOpen(true);
+                }
+            } else {
+                setNotification({ message: "Произошла неизвестная ошибка.", type: 'error' });
+            }
         } finally {
             setIsLoading(prev => ({ ...prev, optimizing: false }));
         }
@@ -226,9 +255,27 @@ const App: React.FC = () => {
             return f;
         }));
     };
+
+    const handleSaveApiKey = () => {
+        const trimmedKey = apiKeyInput.trim();
+        if (trimmedKey) {
+            setApiKey(trimmedKey);
+            localStorage.setItem('geminiApiKey', trimmedKey);
+            setIsApiKeyModalOpen(false);
+            setNotification({ message: 'API ключ сохранен. Теперь вы можете попробовать оптимизировать имена снова.', type: 'success' });
+        } else {
+            setNotification({ message: 'API ключ не может быть пустым.', type: 'error' });
+        }
+    };
     
     const selectedFileData = useMemo(() => htmlFiles.find(f => f.id === selectedFileId), [htmlFiles, selectedFileId]);
     const hasMainPage = useMemo(() => htmlFiles.some(f => f.isMain), [htmlFiles]);
+
+    const notificationColorClasses = {
+        success: 'bg-green-900/50 text-green-300',
+        info: 'bg-blue-900/50 text-blue-300',
+        error: 'bg-red-900/50 text-red-300',
+    };
 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-200 p-4 sm:p-6 lg:p-8">
@@ -256,13 +303,16 @@ const App: React.FC = () => {
                             className="hidden"
                             onChange={handleFileChange}
                             multiple
+                            // @ts-ignore
+                            webkitdirectory=""
+                            directory=""
                         />
                          <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
                             <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
-                            <span className="text-xl font-medium text-white">Перетащите файлы сюда</span>
+                            <span className="text-xl font-medium text-white">Перетащите папку с сайтом сюда</span>
                             <span className="text-gray-400 mt-1">или</span>
                             <span className="mt-2 text-cyan-400 font-semibold hover:text-cyan-300">
-                                Выберите файлы для загрузки
+                                Выберите папку для загрузки
                             </span>
                         </label>
                     </div>
@@ -270,7 +320,7 @@ const App: React.FC = () => {
                     <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         <div className="lg:col-span-2">
                            {notification && (
-                                <div className={`p-4 rounded-lg mb-4 text-sm ${notification.type === 'success' ? 'bg-green-900/50 text-green-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                                <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}>
                                     {notification.message}
                                 </div>
                             )}
@@ -377,9 +427,40 @@ const App: React.FC = () => {
                         <li><strong>Плейсхолдеры:</strong> Приложение автоматически находит "плейсхолдеры" в ваших HTML файлах. Это специальные метки, которые вы можете легко заменить. Используйте формат <code>[[Название]]</code> или <code>{`{{ Название }}`}</code>. Например, <code>[[Контактный Email]]</code>.</li>
                         <li><strong>Настройка:</strong> Выберите страницу из списка. Если в ней есть плейсхолдеры, появится форма. Введите нужные значения, и вы увидите, как превью страницы обновляется в реальном времени.</li>
                         <li><strong>Главная страница:</strong> Обязательно выберите одну из страниц как главную. Она будет автоматически переименована в <code>index.html</code>.</li>
-                        <li><strong>Оптимизация имен:</strong> Нажмите кнопку, чтобы ИИ предложил короткие и понятные имена для ваших HTML-файлов, что полезно для SEO.</li>
+                        <li><strong>Оптимизация имен:</strong> Нажмите кнопку, чтобы ИИ предложил короткие и понятные имена для ваших HTML-файлов, что полезно для SEO. Для этой функции потребуется ваш собственный API-ключ Google Gemini.</li>
                         <li><strong>Упаковка:</strong> Нажмите "Подготовить для GitHub". Приложение заменит все плейсхолдеры, переименует файлы, обновит ссылки между ними и упакует все в один ZIP-архив, готовый к развертыванию.</li>
                     </ol>
+                </div>
+            </Modal>
+
+            <Modal isOpen={isApiKeyModalOpen} onClose={() => setIsApiKeyModalOpen(false)} title="Введите ваш API ключ Google Gemini">
+                <div className="space-y-4 text-gray-300">
+                    <p>Для оптимизации имен файлов с помощью ИИ требуется API ключ от Google AI Studio. Этот ключ будет сохранен в вашем браузере и не будет никуда отправлен.</p>
+                    
+                    <div>
+                        <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300 mb-1">
+                            API ключ
+                        </label>
+                        <input
+                            id="api-key-input"
+                            type="password"
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
+                            placeholder="Введите ваш ключ..."
+                        />
+                    </div>
+                    <p className="text-sm text-gray-400">
+                        Вы можете получить свой ключ в <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a>.
+                    </p>
+                    <div className="flex justify-end gap-3 pt-4 border-t border-gray-700">
+                        <button onClick={() => setIsApiKeyModalOpen(false)} className="px-4 py-2 rounded-md text-sm font-medium text-gray-300 bg-gray-600 hover:bg-gray-500 transition-colors">
+                            Отмена
+                        </button>
+                        <button onClick={handleSaveApiKey} className="px-4 py-2 rounded-md text-sm font-medium text-white bg-cyan-600 hover:bg-cyan-500 transition-colors">
+                            Сохранить ключ
+                        </button>
+                    </div>
                 </div>
             </Modal>
 
