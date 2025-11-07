@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import saveAs from 'file-saver';
 
 const App: React.FC = () => {
+    const [appState, setAppState] = useState<'welcome' | 'main'>('welcome');
     const [files, setFiles] = useState<SiteFile[]>([]);
     const [htmlFiles, setHtmlFiles] = useState<HtmlFile[]>([]);
     const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -38,11 +39,18 @@ const App: React.FC = () => {
         setHtmlFiles([]);
         setSelectedFileId(null);
         setNotification(null);
+        setAppState('welcome');
     };
 
     const processFiles = useCallback(async (uploadedFiles: FileList | null) => {
         if (!uploadedFiles) return;
-        resetState();
+        // Reset only file-related state, not appState
+        files.forEach(file => file.objectUrl && URL.revokeObjectURL(file.objectUrl));
+        htmlFiles.forEach(file => file.previewUrl && URL.revokeObjectURL(file.previewUrl));
+        setFiles([]);
+        setHtmlFiles([]);
+        setSelectedFileId(null);
+        setNotification(null);
 
         const filePromises: Promise<SiteFile>[] = Array.from(uploadedFiles).map(file => {
             return new Promise((resolve, reject) => {
@@ -117,7 +125,7 @@ const App: React.FC = () => {
         } else {
             setNotification({ message: "Плейсхолдеры для настройки не найдены. Вы можете упаковать сайт как есть.", type: 'info' });
         }
-    }, []);
+    }, [files, htmlFiles]);
     
     useEffect(() => {
         const updatePreviews = async () => {
@@ -277,6 +285,43 @@ const App: React.FC = () => {
         error: 'bg-red-900/50 text-red-300',
     };
 
+    const WelcomeScreen = () => (
+        <div className="flex flex-col items-center justify-center min-h-[80vh] text-center p-4">
+            <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">Упаковщик статичных сайтов</h1>
+            <p className="max-w-2xl text-lg text-gray-400 mb-12">
+                Загрузите свой статичный сайт, настройте его с помощью динамических плейсхолдеров, оптимизируйте имена файлов с помощью ИИ и упакуйте все в готовый для развертывания ZIP-архив.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-5xl mb-12">
+                <div className="bg-gray-800/50 p-6 rounded-lg">
+                    <UploadIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
+                    <h3 className="font-semibold text-white">1. Загрузка</h3>
+                    <p className="text-sm text-gray-400">Перетащите папку с вашим сайтом (HTML, CSS, JS, изображения).</p>
+                </div>
+                <div className="bg-gray-800/50 p-6 rounded-lg">
+                    <StarIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
+                    <h3 className="font-semibold text-white">2. Настройка</h3>
+                    <p className="text-sm text-gray-400">Заполните плейсхолдеры и выберите главную страницу.</p>
+                </div>
+                <div className="bg-gray-800/50 p-6 rounded-lg">
+                    <MagicIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
+                    <h3 className="font-semibold text-white">3. Оптимизация</h3>
+                    <p className="text-sm text-gray-400">Используйте ИИ для создания SEO-дружелюбных имен файлов.</p>
+                </div>
+                <div className="bg-gray-800/50 p-6 rounded-lg">
+                    <ZipIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
+                    <h3 className="font-semibold text-white">4. Упаковка</h3>
+                    <p className="text-sm text-gray-400">Получите ZIP-архив, готовый к публикации на GitHub Pages или Vercel.</p>
+                </div>
+            </div>
+            <button 
+                onClick={() => setAppState('main')}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-lg text-lg transition-transform transform hover:scale-105"
+            >
+                Начать работу
+            </button>
+        </div>
+    );
+
     return (
         <div className="min-h-screen bg-gray-900 text-gray-200 p-4 sm:p-6 lg:p-8">
             <div className="max-w-7xl mx-auto">
@@ -290,131 +335,138 @@ const App: React.FC = () => {
                     </button>
                 </header>
                 
-                {files.length === 0 ? (
-                    <div
-                        onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-                        onDragLeave={() => setIsDragging(false)}
-                        onDrop={handleDrop}
-                        className={`relative border-2 border-dashed rounded-lg p-12 text-center transition-colors duration-300 ${isDragging ? 'border-cyan-500 bg-gray-800' : 'border-gray-600 hover:border-cyan-400'}`}
-                    >
-                        <input
-                            type="file"
-                            id="file-upload"
-                            className="hidden"
-                            onChange={handleFileChange}
-                            multiple
-                            // @ts-ignore
-                            webkitdirectory=""
-                            directory=""
-                        />
-                         <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
-                            <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
-                            <span className="text-xl font-medium text-white">Перетащите папку с сайтом сюда</span>
-                            <span className="text-gray-400 mt-1">или</span>
-                            <span className="mt-2 text-cyan-400 font-semibold hover:text-cyan-300">
-                                Выберите папку для загрузки
-                            </span>
-                        </label>
-                    </div>
-                ) : (
-                    <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        <div className="lg:col-span-2">
-                           {notification && (
-                                <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}>
-                                    {notification.message}
-                                </div>
-                            )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {htmlFiles.map(file => (
-                                    <div key={file.id} className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${selectedFileId === file.id ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
-                                        <div className="p-4">
-                                            <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
-                                               <iframe
-                                                    src={file.previewUrl}
-                                                    className="w-full h-full border-0"
-                                                    sandbox="allow-scripts"
-                                                    title={`Preview of ${file.name}`}
+                {appState === 'welcome' && <WelcomeScreen />}
+                
+                {appState === 'main' && (
+                    files.length === 0 ? (
+                        <div
+                            onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                            onDragLeave={() => setIsDragging(false)}
+                            onDrop={handleDrop}
+                            className={`relative border-2 border-dashed rounded-lg p-12 text-center transition-colors duration-300 ${isDragging ? 'border-cyan-500 bg-gray-800' : 'border-gray-600 hover:border-cyan-400'}`}
+                        >
+                            <input
+                                type="file"
+                                id="file-upload"
+                                className="hidden"
+                                onChange={handleFileChange}
+                                multiple
+                                // @ts-ignore
+                                webkitdirectory=""
+                                directory=""
+                            />
+                             <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
+                                <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
+                                <span className="text-xl font-medium text-white">Перетащите папку с сайтом сюда</span>
+                                <span className="text-gray-400 mt-1">или</span>
+                                <span className="mt-2 text-cyan-400 font-semibold hover:text-cyan-300">
+                                    Выберите папку для загрузки
+                                </span>
+                            </label>
+                             <button onClick={resetState} className="absolute bottom-4 right-4 text-sm text-gray-500 hover:text-gray-300 transition-colors">
+                                ← Назад
+                            </button>
+                        </div>
+                    ) : (
+                        <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            <div className="lg:col-span-2">
+                               {notification && (
+                                    <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}>
+                                        {notification.message}
+                                    </div>
+                                )}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {htmlFiles.map(file => (
+                                        <div key={file.id} className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${selectedFileId === file.id ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
+                                            <div className="p-4">
+                                                <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
+                                                   <iframe
+                                                        src={file.previewUrl}
+                                                        className="w-full h-full border-0"
+                                                        sandbox="allow-scripts"
+                                                        title={`Preview of ${file.name}`}
+                                                    />
+                                                    <button
+                                                        onClick={() => setFullscreenPreviewFile(file)}
+                                                        className="absolute top-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        aria-label="Развернуть на весь экран"
+                                                    >
+                                                        <ExpandIcon className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    value={file.newFileName}
+                                                    disabled={file.isMain}
+                                                    onChange={(e) => setHtmlFiles(prev => prev.map(f => f.id === file.id ? {...f, newFileName: e.target.value} : f))}
+                                                    className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
                                                 />
-                                                <button
-                                                    onClick={() => setFullscreenPreviewFile(file)}
-                                                    className="absolute top-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    aria-label="Развернуть на весь экран"
-                                                >
-                                                    <ExpandIcon className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                            <input
-                                                type="text"
-                                                value={file.newFileName}
-                                                disabled={file.isMain}
-                                                onChange={(e) => setHtmlFiles(prev => prev.map(f => f.id === file.id ? {...f, newFileName: e.target.value} : f))}
-                                                className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
-                                            />
-                                            <div className="flex justify-between items-center mt-3">
-                                                <button
-                                                    onClick={() => setMainPage(file.id)}
-                                                    className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md transition-colors ${file.isMain ? 'text-yellow-300 bg-yellow-900/50' : 'text-gray-300 hover:bg-gray-700'}`}
-                                                >
-                                                    <StarIcon className="w-4 h-4"/>
-                                                    {file.isMain ? 'Главная' : 'Сделать главной'}
-                                                </button>
-                                                <button onClick={() => setSelectedFileId(file.id)} className="text-sm text-cyan-400 hover:underline">
-                                                    Настроить
-                                                </button>
+                                                <div className="flex justify-between items-center mt-3">
+                                                    <button
+                                                        onClick={() => setMainPage(file.id)}
+                                                        className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md transition-colors ${file.isMain ? 'text-yellow-300 bg-yellow-900/50' : 'text-gray-300 hover:bg-gray-700'}`}
+                                                    >
+                                                        <StarIcon className="w-4 h-4"/>
+                                                        {file.isMain ? 'Главная' : 'Сделать главной'}
+                                                    </button>
+                                                    <button onClick={() => setSelectedFileId(file.id)} className="text-sm text-cyan-400 hover:underline">
+                                                        Настроить
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <aside className="lg:col-span-1">
-                            <div className="sticky top-8 bg-gray-800 rounded-lg p-6 shadow-lg">
-                                <h2 className="text-xl font-semibold mb-4 text-white">Настройки страницы</h2>
-                                {selectedFileData ? (
-                                    selectedFileData.placeholders.length > 0 ? (
-                                        <form className="space-y-4">
-                                            {selectedFileData.placeholders.map(p => (
-                                                <div key={p}>
-                                                    <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
-                                                    <input
-                                                        type="text"
-                                                        id={p}
-                                                        value={selectedFileData.placeholderValues[p] || ''}
-                                                        onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)}
-                                                        className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
-                                                    />
-                                                </div>
-                                            ))}
-                                        </form>
-                                    ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
-                                ) : (
-                                    <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p>
-                                )}
-                                <div className="mt-8 pt-6 border-t border-gray-700 space-y-3">
-                                    <button
-                                        onClick={handleOptimizeNames}
-                                        disabled={isLoading.optimizing}
-                                        className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed"
-                                    >
-                                        {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>}
-                                        <span>Оптимизировать имена</span>
-                                    </button>
-                                     <button
-                                        onClick={handlePackageZip}
-                                        disabled={!hasMainPage || isLoading.zipping}
-                                        className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed"
-                                    >
-                                        {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>}
-                                        <span>Подготовить для GitHub</span>
-                                    </button>
-                                     <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2">
-                                        Начать заново
-                                    </button>
+                                    ))}
                                 </div>
                             </div>
-                        </aside>
-                    </main>
+    
+                            <aside className="lg:col-span-1">
+                                <div className="sticky top-8 bg-gray-800 rounded-lg p-6 shadow-lg">
+                                    <h2 className="text-xl font-semibold mb-4 text-white">Настройки страницы</h2>
+                                    {selectedFileData ? (
+                                        selectedFileData.placeholders.length > 0 ? (
+                                            <form className="space-y-4">
+                                                {selectedFileData.placeholders.map(p => (
+                                                    <div key={p}>
+                                                        <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
+                                                        <input
+                                                            type="text"
+                                                            id={p}
+                                                            value={selectedFileData.placeholderValues[p] || ''}
+                                                            onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)}
+                                                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </form>
+                                        ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
+                                    ) : (
+                                        <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p>
+                                    )}
+                                    <div className="mt-8 pt-6 border-t border-gray-700 space-y-3">
+                                        <button
+                                            onClick={handleOptimizeNames}
+                                            disabled={isLoading.optimizing}
+                                            className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed"
+                                        >
+                                            {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>}
+                                            <span>Оптимизировать имена</span>
+                                        </button>
+                                         <button
+                                            onClick={handlePackageZip}
+                                            disabled={!hasMainPage || isLoading.zipping}
+                                            className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed"
+                                        >
+                                            {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>}
+                                            <span>Подготовить для GitHub</span>
+                                        </button>
+                                         <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2">
+                                            Начать заново
+                                        </button>
+                                    </div>
+                                </div>
+                            </aside>
+                        </main>
+                    )
                 )}
             </div>
             
