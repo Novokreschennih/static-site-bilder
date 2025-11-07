@@ -12,7 +12,7 @@ export interface HtmlFile extends SiteFile {
   content: string; // Override content to be string for HTML files
   isMain: boolean;
   newFileName: string;
-  placeholders: string[];
+  placeholders: string[]; // For text placeholders
   placeholderValues: Record<string, string>;
-  previewUrl: string;
+  linkPlaceholders: Record<string, string>; // For link placeholders: maps key to target file ID
 }
