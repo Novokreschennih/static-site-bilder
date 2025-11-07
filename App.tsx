@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { optimizeFileName } from './services/geminiService';
@@ -5,6 +6,7 @@ import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, ExpandIcon
 import Modal from './components/Modal';
 import JSZip from 'jszip';
 import saveAs from 'file-saver';
+import { HelpContent } from './components/HelpContent';
 
 const App: React.FC = () => {
     const [appState, setAppState] = useState<'welcome' | 'main'>('welcome');
@@ -17,6 +19,7 @@ const App: React.FC = () => {
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
     const [fullscreenPreviewFile, setFullscreenPreviewFile] = useState<HtmlFile | null>(null);
+    const [globalScripts, setGlobalScripts] = useState<string>('');
     
     const [apiKey, setApiKey] = useState<string>('');
     const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
@@ -39,6 +42,7 @@ const App: React.FC = () => {
         setHtmlFiles([]);
         setSelectedFileId(null);
         setNotification(null);
+        setGlobalScripts('');
         setAppState('welcome');
     };
 
@@ -51,6 +55,7 @@ const App: React.FC = () => {
         setHtmlFiles([]);
         setSelectedFileId(null);
         setNotification(null);
+        setGlobalScripts('');
 
         const filePromises: Promise<SiteFile>[] = Array.from(uploadedFiles).map(file => {
             return new Promise((resolve, reject) => {
@@ -224,6 +229,12 @@ const App: React.FC = () => {
                 }
                 return match;
             });
+            
+            // Inject global scripts
+            if (globalScripts.trim()) {
+                finalContent = finalContent.replace('</head>', `${globalScripts.trim()}\n</head>`);
+            }
+
 
             zip.file(htmlFile.newFileName, finalContent);
         }
@@ -295,7 +306,7 @@ const App: React.FC = () => {
                 <div className="bg-gray-800/50 p-6 rounded-lg">
                     <UploadIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
                     <h3 className="font-semibold text-white">1. Загрузка</h3>
-                    <p className="text-sm text-gray-400">Перетащите папку с вашим сайтом (HTML, CSS, JS, изображения).</p>
+                    <p className="text-sm text-gray-400">Перетащите папку или отдельные файлы вашего сайта (HTML, CSS, JS, изображения).</p>
                 </div>
                 <div className="bg-gray-800/50 p-6 rounded-lg">
                     <StarIcon className="w-8 h-8 mx-auto mb-3 text-cyan-400"/>
@@ -347,22 +358,32 @@ const App: React.FC = () => {
                         >
                             <input
                                 type="file"
-                                id="file-upload"
+                                id="folder-upload"
                                 className="hidden"
                                 onChange={handleFileChange}
                                 multiple
-                                // @ts-ignore
-                                webkitdirectory=""
-                                directory=""
+                                {...{ webkitdirectory: "", directory: "" }}
                             />
-                             <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
+                             <input
+                                type="file"
+                                id="files-upload"
+                                className="hidden"
+                                onChange={handleFileChange}
+                                multiple
+                            />
+                            <div className="flex flex-col items-center">
                                 <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
-                                <span className="text-xl font-medium text-white">Перетащите папку с сайтом сюда</span>
-                                <span className="text-gray-400 mt-1">или</span>
-                                <span className="mt-2 text-cyan-400 font-semibold hover:text-cyan-300">
-                                    Выберите папку для загрузки
-                                </span>
-                            </label>
+                                <span className="text-xl font-medium text-white">Перетащите папку или файлы сюда</span>
+                                <span className="text-gray-400 mt-1 mb-4">или выберите способ загрузки</span>
+                                <div className="flex flex-col sm:flex-row gap-4">
+                                    <label htmlFor="folder-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors">
+                                        Выбрать папку
+                                    </label>
+                                    <label htmlFor="files-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors">
+                                        Выбрать файлы
+                                    </label>
+                                </div>
+                            </div>
                              <button onClick={resetState} className="absolute bottom-4 right-4 text-sm text-gray-500 hover:text-gray-300 transition-colors">
                                 ← Назад
                             </button>
@@ -421,28 +442,41 @@ const App: React.FC = () => {
     
                             <aside className="lg:col-span-1">
                                 <div className="sticky top-8 bg-gray-800 rounded-lg p-6 shadow-lg">
-                                    <h2 className="text-xl font-semibold mb-4 text-white">Настройки страницы</h2>
-                                    {selectedFileData ? (
-                                        selectedFileData.placeholders.length > 0 ? (
-                                            <form className="space-y-4">
-                                                {selectedFileData.placeholders.map(p => (
-                                                    <div key={p}>
-                                                        <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
-                                                        <input
-                                                            type="text"
-                                                            id={p}
-                                                            value={selectedFileData.placeholderValues[p] || ''}
-                                                            onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)}
-                                                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </form>
-                                        ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
-                                    ) : (
-                                        <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p>
-                                    )}
-                                    <div className="mt-8 pt-6 border-t border-gray-700 space-y-3">
+                                    <div className="pb-6 border-b border-gray-700">
+                                        <h2 className="text-xl font-semibold mb-4 text-white">Настройки страницы</h2>
+                                        {selectedFileData ? (
+                                            selectedFileData.placeholders.length > 0 ? (
+                                                <form className="space-y-4">
+                                                    {selectedFileData.placeholders.map(p => (
+                                                        <div key={p}>
+                                                            <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
+                                                            <input
+                                                                type="text"
+                                                                id={p}
+                                                                value={selectedFileData.placeholderValues[p] || ''}
+                                                                onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)}
+                                                                className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                </form>
+                                            ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
+                                        ) : (
+                                            <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p>
+                                        )}
+                                    </div>
+                                    <div className="py-6 border-b border-gray-700">
+                                        <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
+                                        <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
+                                        <textarea
+                                            rows={5}
+                                            value={globalScripts}
+                                            onChange={(e) => setGlobalScripts(e.target.value)}
+                                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono"
+                                            placeholder="<!-- Yandex.Metrika counter -->..."
+                                        />
+                                    </div>
+                                    <div className="mt-6 space-y-3">
                                         <button
                                             onClick={handleOptimizeNames}
                                             disabled={isLoading.optimizing}
@@ -470,19 +504,8 @@ const App: React.FC = () => {
                 )}
             </div>
             
-             <Modal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} title="Как это работает?">
-                <div className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none">
-                    <p>Это приложение помогает вам быстро подготовить ваш статичный сайт для публикации.</p>
-                    <ol>
-                        <li><strong>Загрузка:</strong> Выберите папку с файлами вашего сайта (HTML, CSS, JS, изображения и т.д.).</li>
-                        {/* Fix: Wrap {{...}} in a string literal to prevent JSX parsing it as an object. */}
-                        <li><strong>Плейсхолдеры:</strong> Приложение автоматически находит "плейсхолдеры" в ваших HTML файлах. Это специальные метки, которые вы можете легко заменить. Используйте формат <code>[[Название]]</code> или <code>{`{{ Название }}`}</code>. Например, <code>[[Контактный Email]]</code>.</li>
-                        <li><strong>Настройка:</strong> Выберите страницу из списка. Если в ней есть плейсхолдеры, появится форма. Введите нужные значения, и вы увидите, как превью страницы обновляется в реальном времени.</li>
-                        <li><strong>Главная страница:</strong> Обязательно выберите одну из страниц как главную. Она будет автоматически переименована в <code>index.html</code>.</li>
-                        <li><strong>Оптимизация имен:</strong> Нажмите кнопку, чтобы ИИ предложил короткие и понятные имена для ваших HTML-файлов, что полезно для SEO. Для этой функции потребуется ваш собственный API-ключ Google Gemini.</li>
-                        <li><strong>Упаковка:</strong> Нажмите "Подготовить для GitHub". Приложение заменит все плейсхолдеры, переименует файлы, обновит ссылки между ними и упакует все в один ZIP-архив, готовый к развертыванию.</li>
-                    </ol>
-                </div>
+             <Modal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} title="Описание и инструкция">
+                <HelpContent />
             </Modal>
 
             <Modal isOpen={isApiKeyModalOpen} onClose={() => setIsApiKeyModalOpen(false)} title="Введите ваш API ключ Google Gemini">
@@ -541,11 +564,16 @@ const App: React.FC = () => {
     );
 };
 
+function escapeRegExp(string: string): string {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
 function substitutePlaceholders(content: string, values: Record<string, string>): string {
     let result = content;
     for (const [key, value] of Object.entries(values)) {
-        const placeholder1 = new RegExp(`\\[\\[\\s*${key}\\s*\\]\\]`, 'g');
-        const placeholder2 = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
+        const escapedKey = escapeRegExp(key);
+        const placeholder1 = new RegExp(`\\[\\[\\s*${escapedKey}\\s*\\]\\]`, 'g');
+        const placeholder2 = new RegExp(`\\{\\{\\s*${escapedKey}\\s*\\}\\}`, 'g');
         result = result.replace(placeholder1, value);
         result = result.replace(placeholder2, value);
     }
