@@ -3,11 +3,12 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { optimizeFileName } from './services/geminiService';
-import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, ExpandIcon } from './components/icons';
+import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, ExpandIcon, SettingsIcon, ShieldCheckIcon } from './components/icons';
 import Modal from './components/Modal';
 import JSZip from 'jszip';
 import saveAs from 'file-saver';
 import { HelpContent } from './components/HelpContent';
+import { LegalContent } from './components/LegalContent';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { AUTH_STORAGE_KEY, APP_ID } from './constants';
 import { LandingPage } from './components/LandingPage';
@@ -27,11 +28,15 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState<Record<string, boolean>>({ optimizing: false, zipping: false });
     const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+    const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
     const [fullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, url: string} | null>(null);
     const [globalScripts, setGlobalScripts] = useState<string>('');
     
-    // Fix: Removed state management for API key to comply with guidelines.
+    // State for API key modal and key management
+    const [apiKey, setApiKey] = useLocalStorage<string>('gemini-api-key', '');
+    const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+    const [tempApiKey, setTempApiKey] = useState(''); // For the modal input
     
     useEffect(() => {
         if (isAuthenticated) {
@@ -40,8 +45,6 @@ const App: React.FC = () => {
             setView('landing');
         }
     }, [isAuthenticated]);
-
-    // Fix: Removed useEffect for loading API key from localStorage.
 
     const deploymentInstructions = useMemo(() => getDeploymentInstructions(), []);
 
@@ -243,13 +246,18 @@ const App: React.FC = () => {
     const handleOptimizeNames = async () => {
         setNotification(null);
 
-        // Fix: Removed API key check and modal logic.
+        if (!apiKey) {
+            setNotification({ message: 'Для оптимизации имен нужен API-ключ Google Gemini.', type: 'error' });
+            setTempApiKey(''); // Reset temp key before opening modal
+            setIsApiKeyModalOpen(true);
+            return;
+        }
+
         setIsLoading(prev => ({ ...prev, optimizing: true }));
         try {
             const promises = htmlFiles.map(async file => {
                 if (file.isMain) return file;
-                // Fix: Call optimizeFileName without the apiKey argument.
-                const newName = await optimizeFileName(file.content);
+                const newName = await optimizeFileName(file.content, apiKey);
                 return { ...file, newFileName: `${newName}.html` };
             });
             const optimizedFiles = await Promise.all(promises);
@@ -259,7 +267,10 @@ const App: React.FC = () => {
             console.error("Error during filename optimization:", error);
             if (error instanceof Error) {
                 setNotification({ message: error.message, type: 'error' });
-                // Fix: Removed specific error handling for invalid API key.
+                if (error.message.includes('API-ключ')) {
+                     setTempApiKey(apiKey);
+                     setIsApiKeyModalOpen(true);
+                }
             } else {
                 setNotification({ message: "Произошла неизвестная ошибка.", type: 'error' });
             }
@@ -345,7 +356,11 @@ const App: React.FC = () => {
         }));
     };
 
-    // Fix: Removed handleSaveApiKey function.
+    const handleSaveApiKey = (newKey: string) => {
+        setApiKey(newKey);
+        setIsApiKeyModalOpen(false);
+        setNotification({ message: 'API-ключ сохранен!', type: 'success' });
+    };
     
     const selectedFileData = useMemo(() => htmlFiles.find(f => f.id === selectedFileId), [htmlFiles, selectedFileId]);
     const hasMainPage = useMemo(() => htmlFiles.some(f => f.isMain), [htmlFiles]);
@@ -378,7 +393,6 @@ const App: React.FC = () => {
                 <header className="flex justify-between items-center mb-6">
                     <div> <h1 className="text-3xl font-bold text-white">Упаковщик статичных сайтов</h1> <p className="text-gray-400">Для GitHub Pages и Vercel</p> </div>
                     <div className="flex items-center gap-2">
-                        <button onClick={() => setIsHelpModalOpen(true)} className="p-2 rounded-full hover:bg-gray-700 transition-colors" aria-label="Open help modal"> <HelpIcon className="w-6 h-6 text-gray-400"/> </button>
                         <button onClick={handleLogout} className="text-sm font-semibold text-gray-300 hover:text-red-400 transition-colors px-4 py-2 rounded-md hover:bg-gray-700"> Выйти </button>
                     </div>
                 </header>
@@ -480,9 +494,72 @@ const App: React.FC = () => {
                 )}
             </div>
             
-            <Modal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} title="Описание и инструкция"> <HelpContent /> </Modal>
+            <div className="fixed bottom-8 right-8 flex flex-col gap-4 z-40">
+                 <button
+                    onClick={() => setIsLegalModalOpen(true)}
+                    className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
+                    aria-label="Политика конфиденциальности и Условия использования"
+                >
+                    <ShieldCheckIcon className="w-6 h-6" />
+                </button>
+                <button
+                    onClick={() => { setTempApiKey(apiKey); setIsApiKeyModalOpen(true); }}
+                    className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
+                    aria-label="Настройки"
+                >
+                    <SettingsIcon className="w-6 h-6" />
+                </button>
+                <button
+                    onClick={() => setIsHelpModalOpen(true)}
+                    className="bg-cyan-600 hover:bg-cyan-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
+                    aria-label="Открыть справку"
+                >
+                    <HelpIcon className="w-6 h-6" />
+                </button>
+            </div>
 
-            {/* Fix: Removed API Key Modal */}
+            <Modal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} title="Описание и инструкция"> <HelpContent /> </Modal>
+            
+            <Modal isOpen={isLegalModalOpen} onClose={() => setIsLegalModalOpen(false)} title="Политика конфиденциальности и Условия использования"> <LegalContent /> </Modal>
+
+            <Modal isOpen={isApiKeyModalOpen} onClose={() => setIsApiKeyModalOpen(false)} title="Настройка API-ключа Google Gemini">
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-400">
+                        Для использования функции оптимизации имен файлов вам понадобится API-ключ от Google Gemini. Вы можете получить его бесплатно в <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a>.
+                    </p>
+                    <p className="text-xs text-gray-500">
+                        Ваш ключ хранится локально в вашем браузере и используется только для отправки запросов в Google.
+                    </p>
+                    <div>
+                        <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300 mb-1">
+                            Ваш API-ключ
+                        </label>
+                        <input
+                            id="api-key-input"
+                            type="password"
+                            autoComplete="off"
+                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
+                            placeholder="Введите ваш ключ..."
+                            value={tempApiKey}
+                            onChange={(e) => setTempApiKey(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex justify-end gap-3">
+                        <button
+                            onClick={() => setIsApiKeyModalOpen(false)}
+                            className="bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-4 rounded-md transition-colors"
+                        >
+                            Отмена
+                        </button>
+                        <button
+                            onClick={() => handleSaveApiKey(tempApiKey)}
+                            className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors"
+                        >
+                            Сохранить
+                        </button>
+                    </div>
+                </div>
+            </Modal>
 
             <Modal isOpen={isDeployModalOpen} onClose={() => setIsDeployModalOpen(false)} title="Сайт готов к развертыванию!">
                 <div className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: deploymentInstructions.replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1.5 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline">$1</a>').replace(/\n/g, '<br />') }} />

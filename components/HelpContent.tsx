@@ -84,16 +84,28 @@ export const HelpContent: React.FC = () => (
             <p>В правой панели вы найдете раздел <strong>"Глобальные скрипты"</strong>. Вставьте сюда код от Яндекс.Метрики, Google Analytics или другого сервиса. Этот код будет автоматически добавлен на все ваши HTML-страницы перед упаковкой.</p>
             
             <h4 className="text-lg font-semibold text-white mt-4">Шаг 5: Оптимизация имен файлов (необязательно)</h4>
-            <p>Это очень полезный шаг для улучшения SEO.</p>
-             <ol className="list-decimal list-inside space-y-2">
+            <p>Это очень полезный шаг для улучшения SEO. Приложение использует искусственный интеллект Google Gemini для анализа контента ваших страниц и предлагает для них короткие, понятные и SEO-дружелюбные имена.</p>
+            <p className="font-semibold mt-3">Для этого вам понадобится собственный API-ключ от Google.</p>
+
+            <div className="mt-2 p-3 bg-gray-800 rounded-lg border border-gray-700">
+                <p className="font-semibold text-white mb-2">Как получить и настроить API-ключ:</p>
+                <ol className="list-decimal list-inside space-y-2 text-sm">
+                    <li>
+                        <strong>Получите ключ:</strong> Перейдите в <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a> и создайте новый API-ключ. Это бесплатно.
+                    </li>
+                    <li>
+                        <strong>Откройте настройки:</strong> В приложении, в правом верхнем углу, нажмите на иконку шестеренки (<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 inline-block -mt-1"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.438.995s.145.755.438.995l1.003.827c.424.35.534.954.26 1.431l-1.296 2.247a1.125 1.125 0 01-1.37.49l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.063-.374-.313-.686-.645-.87a6.52 6.52 0 01-.22-.127c-.324-.196-.72-.257-1.075-.124l-1.217.456a1.125 1.125 0 01-1.37-.49l-1.296-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.437-.995s-.145-.755-.437-.995l-1.004-.827a1.125 1.125 0 01-.26-1.431l1.296-2.247a1.125 1.125 0 011.37-.49l1.217.456c.355.133.75.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.213-1.28z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>).
+                    </li>
+                    <li>
+                        <strong>Вставьте и сохраните:</strong> В появившемся окне вставьте скопированный ключ и нажмите "Сохранить". Ключ будет сохранен в вашем браузере, и вам не придется вводить его снова.
+                    </li>
+                </ol>
+            </div>
+            <p className="font-semibold mt-3">Как использовать оптимизацию:</p>
+            <ol className="list-decimal list-inside space-y-2">
                 <li><strong>Нажмите кнопку:</strong> В правой панели нажмите <strong>"Оптимизировать имена"</strong>.</li>
-                <li><strong>Введите API-ключ:</strong> При первом использовании приложение попросит вас ввести <strong>API-ключ от Google Gemini</strong>.
-                    <ul className="list-disc list-inside ml-6 mt-2 space-y-1">
-                        <li>Вы можете бесплатно получить его в <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a>.</li>
-                        <li>Ключ надежно сохранится в вашем браузере для будущего использования.</li>
-                    </ul>
-                </li>
-                 <li><strong>Готово:</strong> ИИ проанализирует содержимое каждой страницы (кроме главной) и переименует файлы, используя понятные слова в <code>kebab-case</code> (например, <code>kontaktnaya-informaciya.html</code>).</li>
+                <li><strong>Магия ИИ:</strong> Приложение отправит контент каждой страницы (кроме главной) в Google Gemini для анализа.</li>
+                <li><strong>Готово:</strong> ИИ переименует файлы, используя понятные слова в <code>kebab-case</code> (например, <code>kontaktnaya-informaciya.html</code>).</li>
             </ol>
             
             <h4 className="text-lg font-semibold text-white mt-4">Шаг 6: Упаковка и скачивание</h4>

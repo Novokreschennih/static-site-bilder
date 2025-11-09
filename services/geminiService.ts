@@ -1,10 +1,10 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-// Fix: Removed apiKey parameter to comply with the guideline of using environment variables for the API key.
-export const optimizeFileName = async (htmlContent: string): Promise<string> => {
-    // Fix: Initialize GoogleGenAI with API key from environment variables as per guidelines.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Re-add apiKey parameter as users will now provide their own.
+export const optimizeFileName = async (htmlContent: string, apiKey: string): Promise<string> => {
+    // Initialize GoogleGenAI with the user-provided API key.
+    const ai = new GoogleGenAI({ apiKey });
 
     // Truncate content to avoid exceeding token limits, focusing on meaningful tags.
     const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
@@ -37,7 +37,10 @@ export const optimizeFileName = async (htmlContent: string): Promise<string> => 
 
     } catch (error) {
         console.error("Error optimizing filename with Gemini API:", error);
-        // Fix: Simplified error handling as the user no longer manages the API key.
+        // Provide more specific feedback for invalid API keys.
+        if (error.toString().includes('API key not valid')) {
+            throw new Error("Неверный API-ключ. Проверьте ключ в настройках.");
+        }
         throw new Error("Не удалось оптимизировать имя файла из-за ошибки API.");
     }
 };
