@@ -27,7 +27,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 
         className={`bg-gray-800 rounded-lg shadow-xl flex flex-col transform transition-all duration-300 scale-95 ${sizeClass}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center p-4 border-b border-gray-700">
+        <div className="flex justify-between items-center p-4 border-b border-gray-700 flex-shrink-0">
           <h2 className="text-xl font-semibold text-white">{title}</h2>
           <button 
             onClick={onClose} 
@@ -37,7 +37,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 
             <CloseIcon className="w-6 h-6" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto flex-grow">
+        <div className="p-6 flex flex-col flex-grow overflow-hidden">
           {children}
         </div>
       </div>

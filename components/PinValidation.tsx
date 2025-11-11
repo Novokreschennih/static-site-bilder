@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useI18n } from '../hooks/useI18n';
 import Icon from './Icon';
@@ -35,20 +34,24 @@ const PinValidation: React.FC<PinValidationProps> = ({ onSuccess, appId }) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ pin_code: pin, app_id: appId }),
+        body: JSON.stringify({ pin, appId }),
       });
 
       if (response.ok) {
-        onSuccess();
-      } else if (response.status === 404 || response.status === 401) {
-        triggerError('pinCodePage.errorUsedOrNotFound');
-      } else if (response.status === 403) {
-        triggerError('pinCodePage.errorAccessDenied');
+        // Success! Simulate a short network delay for better UX.
+        setTimeout(() => {
+            onSuccess();
+        }, 300);
       } else {
-        triggerError('pinCodePage.error');
+         // Handle specific error codes from the service.
+         if (response.status === 404) {
+             triggerError('pinCodePage.errorUsedOrNotFound');
+         } else {
+             triggerError('pinCodePage.error');
+         }
       }
     } catch (err) {
-      console.error('Network error during PIN validation:', err);
+      console.error('PIN validation network error:', err);
       triggerError('pinCodePage.errorNetwork');
     }
   };

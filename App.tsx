@@ -1,9 +1,8 @@
-
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
-import { optimizeFileName } from './services/geminiService';
-import { StarIcon, UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, ExpandIcon, SettingsIcon, ShieldCheckIcon } from './components/icons';
+import { analyzeHtmlContent, optimizeFileName, applyAnalysisFixes } from './services/geminiService';
+import { UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, SettingsIcon, ShieldCheckIcon, FolderPlusIcon, DocumentPlusIcon, AnalyticsIcon } from './components/icons';
+import { HtmlFileCard } from './components/HtmlFileCard';
 import Modal from './components/Modal';
 import JSZip from 'jszip';
 import saveAs from 'file-saver';
@@ -25,19 +24,24 @@ const App: React.FC = () => {
     const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
     const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState<boolean>(false);
-    const [isLoading, setIsLoading] = useState<Record<string, boolean>>({ optimizing: false, zipping: false });
+    const [isLoading, setIsLoading] = useState<{ optimizing: boolean; zipping: boolean; analyzingFileId: string | null; applyingFixes: boolean }>({ optimizing: false, zipping: false, analyzingFileId: null, applyingFixes: false });
     const [notification, setNotification] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
     const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
     const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
+    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
-    const [fullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, url: string} | null>(null);
+    const [isFullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, url: string} | null>(null);
     const [globalScripts, setGlobalScripts] = useState<string>('');
+    const [isAnalysisReportModalOpen, setIsAnalysisReportModalOpen] = useState(false);
+    const [analysisReportContent, setAnalysisReportContent] = useState('');
     
-    // State for API key modal and key management
     const [apiKey, setApiKey] = useLocalStorage<string>('gemini-api-key', '');
-    const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-    const [tempApiKey, setTempApiKey] = useState(''); // For the modal input
-    
+    const [tempApiKey, setTempApiKey] = useState(apiKey);
+
+    useEffect(() => {
+        setTempApiKey(apiKey);
+    }, [apiKey, isSettingsModalOpen]);
+
     useEffect(() => {
         if (isAuthenticated) {
             setView('app');
@@ -72,21 +76,10 @@ const App: React.FC = () => {
         setIsAuthenticated(false);
     }, [resetState, setIsAuthenticated]);
 
+    const processFiles = useCallback(async (uploadedFileArray: File[]) => {
+        if (!uploadedFileArray || uploadedFileArray.length === 0) return;
 
-    const processFiles = useCallback(async (uploadedFiles: FileList | null) => {
-        if (!uploadedFiles) return;
-        files.forEach(file => file.objectUrl && URL.revokeObjectURL(file.objectUrl));
-        Object.values(previewUrls).forEach(URL.revokeObjectURL);
-        setFiles([]);
-        setHtmlFiles([]);
-        setPreviewUrls({});
-        setSelectedFileId(null);
-        setNotification(null);
-        setGlobalScripts('');
-
-        const uploadedFileArray = Array.from(uploadedFiles);
         let commonBasePath = '';
-
         if (uploadedFileArray.length > 1 && uploadedFileArray[0].webkitRelativePath) {
             const firstPath = uploadedFileArray[0].webkitRelativePath;
             const firstPathParts = firstPath.split('/');
@@ -98,92 +91,79 @@ const App: React.FC = () => {
             }
         }
 
-        const filePromises: Promise<SiteFile | null>[] = uploadedFileArray.map(file => {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                const originalPath = (file as any).webkitRelativePath || file.name;
-                const path = originalPath.startsWith(commonBasePath)
-                    ? originalPath.substring(commonBasePath.length)
-                    : originalPath;
+        const existingFileIds = new Set(files.map(f => `${(f as any).webkitRelativePath || f.name}-${f.lastModified}`));
 
-                if (!path) {
-                    resolve(null);
-                    return;
-                }
+        const filePromises: Promise<SiteFile | null>[] = uploadedFileArray
+            .filter(file => !existingFileIds.has(`${(file as any).webkitRelativePath || file.name}-${file.lastModified}`))
+            .map(file => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    const originalPath = (file as any).webkitRelativePath || file.name;
+                    const path = originalPath.startsWith(commonBasePath)
+                        ? originalPath.substring(commonBasePath.length)
+                        : originalPath;
 
-                reader.onload = (e) => {
-                    const content = e.target?.result;
-                    if (content) {
-                        const newFile: SiteFile = { id: `${path}-${file.lastModified}`, path, name: file.name, content, type: file.type };
-                        resolve(newFile);
-                    } else { resolve(null); }
-                };
-                reader.onerror = () => resolve(null);
+                    if (!path) { resolve(null); return; }
 
-                if (file.type.startsWith('text/') || file.type === 'application/javascript' || file.type === '') {
-                    reader.readAsText(file);
-                } else {
-                    reader.readAsArrayBuffer(file);
-                }
+                    reader.onload = (e) => {
+                        const content = e.target?.result;
+                        if (content) {
+                            const newFile: SiteFile = { id: `${path}-${file.lastModified}`, path, name: file.name, content, type: file.type };
+                            resolve(newFile);
+                        } else { resolve(null); }
+                    };
+                    reader.onerror = () => resolve(null);
+
+                    if (file.type.startsWith('text/') || file.type === 'application/javascript' || file.type === '') {
+                        reader.readAsText(file);
+                    } else {
+                        reader.readAsArrayBuffer(file);
+                    }
+                });
             });
-        });
 
-        const allFiles = (await Promise.all(filePromises)).filter((f): f is SiteFile => f !== null);
-        
-        const fileMap = new Map<string, SiteFile>();
-        allFiles.forEach(f => {
+        const newFiles = (await Promise.all(filePromises)).filter((f): f is SiteFile => f !== null);
+        if (newFiles.length === 0) {
+            setNotification({ message: "Все выбранные файлы уже добавлены.", type: 'info'});
+            return;
+        };
+
+        const newFileMap = new Map<string, SiteFile>();
+        newFiles.forEach(f => {
              const objectUrl = URL.createObjectURL(new Blob([f.content], { type: f.type }));
              const fileWithUrl = {...f, objectUrl};
-             fileMap.set(f.path, fileWithUrl);
+             newFileMap.set(f.path, fileWithUrl);
         });
         
-        const processedHtmlFiles: HtmlFile[] = [];
+        const newHtmlFiles: HtmlFile[] = [];
         let totalPlaceholders = 0;
 
-        for (const file of allFiles) {
+        for (const file of newFiles) {
             if (file.type === 'text/html') {
                 const content = file.content as string;
                 const placeholderRegex = /(?:\[\[|{{)\s*(.*?)\s*(?:\]\]|}})/g;
                 const allMatches = Array.from(content.matchAll(placeholderRegex), m => m[1].trim());
                 const allPlaceholders = [...new Set(allMatches)];
-
                 const textPlaceholders = allPlaceholders.filter(p => !/^(link|url)_/i.test(p));
                 const linkPlaceholderKeys = allPlaceholders.filter(p => /^(link|url)_/i.test(p));
                 totalPlaceholders += allPlaceholders.length;
-
                 const placeholderValues = textPlaceholders.reduce((acc, p) => ({ ...acc, [p]: '' }), {});
                 const linkPlaceholders = linkPlaceholderKeys.reduce((acc, p) => ({ ...acc, [p]: '' }), {});
-
-                processedHtmlFiles.push({
-                    ...file,
-                    content,
-                    isMain: false,
-                    newFileName: file.name,
-                    placeholders: textPlaceholders,
-                    placeholderValues,
-                    linkPlaceholders
-                });
+                newHtmlFiles.push({ ...file, content, isMain: false, newFileName: file.name, placeholders: textPlaceholders, placeholderValues, linkPlaceholders });
             }
         }
         
-        setFiles(Array.from(fileMap.values()));
-        setHtmlFiles(processedHtmlFiles);
-
-        if (totalPlaceholders > 0) {
-            setNotification({ message: "Найдены плейсхолдеры! Выберите страницу, чтобы их настроить.", type: 'success' });
-        } else {
-            setNotification({ message: "Плейсхолдеры для настройки не найдены. Вы можете упаковать сайт как есть.", type: 'info' });
-        }
-    }, [files, previewUrls]);
+        setFiles(prev => [...prev, ...Array.from(newFileMap.values())]);
+        setHtmlFiles(prev => [...prev, ...newHtmlFiles]);
+        setNotification({ message: `Добавлено ${newFiles.length} новых файлов.`, type: 'success' });
+    }, [files]);
     
     useEffect(() => {
         const generateAllPreviews = async () => {
-             // Revoke old URLs before creating new ones
             Object.values(previewUrls).forEach(URL.revokeObjectURL);
-
-            const assetFileMap = new Map(files.map(f => [f.path, f]));
+            // FIX: Explicitly typing `assetFileMap` to resolve a TypeScript error where it was inferred as `Map<unknown, unknown>`.
+            const assetFileMap: Map<string, SiteFile> = new Map(files.map(f => [f.path, f]));
             const newPreviewUrls: Record<string, string> = {};
-
             for (const hf of htmlFiles) {
                 const substitutedContent = substituteAllPlaceholders(hf, htmlFiles);
                 const url = await createPreviewUrl(substitutedContent, hf.path, assetFileMap);
@@ -191,23 +171,14 @@ const App: React.FC = () => {
             }
             setPreviewUrls(newPreviewUrls);
         };
-
-        if (htmlFiles.length > 0) {
-            generateAllPreviews();
-        }
-
-        return () => {
-            if (htmlFiles.length > 0) {
-                Object.values(previewUrls).forEach(URL.revokeObjectURL);
-            }
-        };
-        // This effect should run whenever the source data for previews changes.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [htmlFiles]);
+        if (htmlFiles.length > 0) { generateAllPreviews(); }
+        return () => { if (htmlFiles.length > 0) { Object.values(previewUrls).forEach(URL.revokeObjectURL); }};
+    // FIX: Added `files` to the dependency array to ensure previews are regenerated when any file changes, preventing stale data.
+    }, [files, htmlFiles]);
 
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        processFiles(e.target.files);
+        if (e.target.files) processFiles(Array.from(e.target.files));
     };
 
     const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -215,7 +186,7 @@ const App: React.FC = () => {
         e.stopPropagation();
         setIsDragging(false);
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            processFiles(e.dataTransfer.files);
+            processFiles(Array.from(e.dataTransfer.files));
         }
     };
     
@@ -224,35 +195,51 @@ const App: React.FC = () => {
             const oldMain = prev.find(f => f.isMain);
             return prev.map(file => {
                 let newFileName = file.newFileName;
-                if (file.id === id) {
-                    newFileName = 'index.html';
-                } else if (oldMain && file.id === oldMain.id) {
-                    // Revert old main page back to its original name if it wasn't modified
-                    // Or keep its optimized name if it was
-                     newFileName = file.newFileName === 'index.html' ? file.name : file.newFileName;
-                }
-
-                return {
-                    ...file,
-                    isMain: file.id === id,
-                    newFileName: newFileName,
-                };
+                if (file.id === id) { newFileName = 'index.html'; } 
+                else if (oldMain && file.id === oldMain.id) { newFileName = file.newFileName === 'index.html' ? file.name : file.newFileName; }
+                return { ...file, isMain: file.id === id, newFileName: newFileName };
             });
         });
         setSelectedFileId(id);
     };
 
+    const handleDeleteFile = useCallback((fileIdToDelete: string) => {
+        const fileToDelete = files.find(f => f.id === fileIdToDelete);
+        if (!fileToDelete) return;
+
+        if (fileToDelete.objectUrl) URL.revokeObjectURL(fileToDelete.objectUrl);
+        if (previewUrls[fileIdToDelete]) URL.revokeObjectURL(previewUrls[fileIdToDelete]);
+
+        setHtmlFiles(prevHtmlFiles => prevHtmlFiles
+            .map(hf => {
+                const newLinkPlaceholders = { ...hf.linkPlaceholders };
+                let changed = false;
+                for (const key in newLinkPlaceholders) {
+                    if (newLinkPlaceholders[key] === fileIdToDelete) {
+                        newLinkPlaceholders[key] = '';
+                        changed = true;
+                    }
+                }
+                return changed ? { ...hf, linkPlaceholders: newLinkPlaceholders } : hf;
+            })
+            .filter(hf => hf.id !== fileIdToDelete)
+        );
+
+        setFiles(prev => prev.filter(f => f.id !== fileIdToDelete));
+        setPreviewUrls(prev => { const newUrls = { ...prev }; delete newUrls[fileIdToDelete]; return newUrls; });
+        if (selectedFileId === fileIdToDelete) { setSelectedFileId(null); }
+        
+        setNotification({ message: `Файл "${fileToDelete.name}" удален.`, type: 'info' });
+    }, [files, previewUrls, selectedFileId]);
+
 
     const handleOptimizeNames = async () => {
         setNotification(null);
-
         if (!apiKey) {
-            setNotification({ message: 'Для оптимизации имен нужен API-ключ Google Gemini.', type: 'error' });
-            setTempApiKey(''); // Reset temp key before opening modal
-            setIsApiKeyModalOpen(true);
+            setNotification({ message: 'Пожалуйста, введите ваш API ключ в настройках.', type: 'error' });
+            setIsSettingsModalOpen(true);
             return;
         }
-
         setIsLoading(prev => ({ ...prev, optimizing: true }));
         try {
             const promises = htmlFiles.map(async file => {
@@ -265,136 +252,144 @@ const App: React.FC = () => {
             setNotification({ message: 'Имена файлов успешно оптимизированы!', type: 'success' });
         } catch (error) {
             console.error("Error during filename optimization:", error);
-            if (error instanceof Error) {
+            if (error instanceof Error && error.message.includes("API-ключ недействителен")) {
+                setNotification({ message: "Ваш API-ключ недействителен. Проверьте его в настройках.", type: 'error' });
+                setIsSettingsModalOpen(true);
+            } else if (error instanceof Error) {
                 setNotification({ message: error.message, type: 'error' });
-                if (error.message.includes('API-ключ')) {
-                     setTempApiKey(apiKey);
-                     setIsApiKeyModalOpen(true);
+            } else { setNotification({ message: "Произошла неизвестная ошибка.", type: 'error' }); }
+        } finally { setIsLoading(prev => ({ ...prev, optimizing: false })); }
+    };
+
+    const handleAnalyzeContent = async (fileId: string) => {
+        setNotification(null);
+        setSelectedFileId(fileId); // Устанавливаем контекст для модального окна
+        if (!apiKey) {
+            setNotification({ message: 'Пожалуйста, введите ваш API ключ в настройках.', type: 'error' });
+            setIsSettingsModalOpen(true);
+            return;
+        }
+        
+        const fileToAnalyze = htmlFiles.find(f => f.id === fileId);
+        if (!fileToAnalyze) return;
+
+        setIsLoading(prev => ({ ...prev, analyzingFileId: fileId }));
+        setAnalysisReportContent('');
+        setIsAnalysisReportModalOpen(true);
+
+        try {
+            const report = await analyzeHtmlContent(fileToAnalyze.content, apiKey);
+            setAnalysisReportContent(report);
+        } catch (error) {
+            console.error("Error during content analysis:", error);
+            let errorMessage = "Произошла неизвестная ошибка при анализе.";
+            if (error instanceof Error) {
+                if (error.message.includes("API-ключ недействителен")) {
+                    errorMessage = "Ваш API-ключ недействителен. Проверьте его в настройках.";
+                    setIsSettingsModalOpen(true);
+                } else {
+                    errorMessage = error.message;
                 }
-            } else {
-                setNotification({ message: "Произошла неизвестная ошибка.", type: 'error' });
             }
+            setAnalysisReportContent(`## Ошибка анализа\n\n${errorMessage}`);
         } finally {
-            setIsLoading(prev => ({ ...prev, optimizing: false }));
+            setIsLoading(prev => ({ ...prev, analyzingFileId: null }));
         }
     };
+    
+    const handleApplyFixes = async () => {
+        if (!selectedFileId || !analysisReportContent) return;
+        
+        const fileToFix = htmlFiles.find(f => f.id === selectedFileId);
+        if (!fileToFix) return;
+
+        setIsLoading(prev => ({ ...prev, applyingFixes: true }));
+        setNotification(null);
+
+        try {
+            const fixedHtml = await applyAnalysisFixes(fileToFix.content, apiKey);
+            setHtmlFiles(prev => 
+                prev.map(f => 
+                    f.id === selectedFileId ? { ...f, content: fixedHtml } : f
+                )
+            );
+            setNotification({ message: `Изменения для "${fileToFix.newFileName}" успешно применены!`, type: 'success' });
+            setIsAnalysisReportModalOpen(false);
+        } catch (error) {
+            console.error("Error applying fixes:", error);
+            let errorMessage = "Произошла неизвестная ошибка при применении исправлений.";
+            if (error instanceof Error) {
+                errorMessage = error.message;
+            }
+            setNotification({ message: errorMessage, type: 'error' });
+        } finally {
+            setIsLoading(prev => ({ ...prev, applyingFixes: false }));
+        }
+    };
+
 
     const handlePackageZip = async () => {
         setIsLoading(prev => ({ ...prev, zipping: true }));
         const zip = new JSZip();
-        
         const htmlFileNameMap = new Map(htmlFiles.map(f => [f.name, f.newFileName]));
         const htmlFilePathMap = new Map(htmlFiles.map(f => [f.path, f.newFileName]));
-
-        // Process HTML files
         for (const htmlFile of htmlFiles) {
             let finalContent = substituteAllPlaceholders(htmlFile, htmlFiles);
-            
             finalContent = finalContent.replace(/(href|src)=["'](?!https?:\/\/)([^"']+)["']/g, (match, attr, path) => {
                 const fullPath = new URL(path, `file:///${htmlFile.path.substring(0, htmlFile.path.lastIndexOf('/') + 1)}`).pathname.substring(1);
-                
                 if(htmlFilePathMap.has(fullPath)) {
-                    // This is a link to another managed HTML file, its name is already handled by placeholders or direct naming.
-                    // However, we need to adjust the path relative to the final output structure.
-                    const newName = htmlFilePathMap.get(fullPath)!;
-                    const newPath = path.substring(0, path.lastIndexOf('/') + 1) + newName;
+                    const newName = htmlFilePathMap.get(fullPath)!; const newPath = path.substring(0, path.lastIndexOf('/') + 1) + newName;
                     return `${attr}="${newPath}"`;
                 }
-                 // Let's also check against original names, just in case
                 const baseName = path.split('/').pop();
-                if(baseName && htmlFileNameMap.has(baseName)) {
-                    const newPath = path.replace(baseName, htmlFileNameMap.get(baseName)!);
-                    return `${attr}="${newPath}"`;
-                }
+                if(baseName && htmlFileNameMap.has(baseName)) { const newPath = path.replace(baseName, htmlFileNameMap.get(baseName)!); return `${attr}="${newPath}"`; }
                 return match;
             });
-            
-            if (globalScripts.trim()) {
-                finalContent = finalContent.replace('</head>', `${globalScripts.trim()}\n</head>`);
-            }
-
+            if (globalScripts.trim()) { finalContent = finalContent.replace('</head>', `${globalScripts.trim()}\n</head>`); }
             const finalPath = htmlFile.path.substring(0, htmlFile.path.lastIndexOf('/') + 1) + htmlFile.newFileName;
             zip.file(finalPath, finalContent);
         }
-
-        files.forEach(file => {
-            if (file.type !== 'text/html') {
-                zip.file(file.path, file.content);
-            }
-        });
-        
+        files.forEach(file => { if (file.type !== 'text/html') { zip.file(file.path, file.content); } });
         zip.file("README.md", deploymentInstructions);
         zip.file("vercel.json", JSON.stringify({}, null, 2));
-
         try {
             const content = await zip.generateAsync({ type: 'blob' });
-            saveAs(content, 'deploy.zip');
-            setIsDeployModalOpen(true);
+            saveAs(content, 'deploy.zip'); setIsDeployModalOpen(true);
         } catch (error) {
             console.error("Error creating ZIP file:", error);
             setNotification({ message: 'Ошибка при создании ZIP-архива.', type: 'error' });
-        } finally {
-            setIsLoading(prev => ({ ...prev, zipping: false }));
-        }
+        } finally { setIsLoading(prev => ({ ...prev, zipping: false })); }
     };
     
     const handlePlaceholderChange = (fileId: string, placeholder: string, value: string) => {
-        setHtmlFiles(prev => prev.map(f => {
-            if (f.id === fileId) {
-                return { ...f, placeholderValues: { ...f.placeholderValues, [placeholder]: value } };
-            }
-            return f;
-        }));
+        setHtmlFiles(prev => prev.map(f => f.id === fileId ? { ...f, placeholderValues: { ...f.placeholderValues, [placeholder]: value } } : f));
+    };
+    const handleLinkPlaceholderChange = (fileId: string, placeholder: string, targetFileId: string) => {
+        setHtmlFiles(prev => prev.map(f => f.id === fileId ? { ...f, linkPlaceholders: { ...f.linkPlaceholders, [placeholder]: targetFileId } } : f));
+    };
+    const handleSaveApiKey = () => {
+        setApiKey(tempApiKey);
+        setIsSettingsModalOpen(false);
+        setNotification({ message: 'API ключ успешно сохранен.', type: 'success' });
     };
 
-     const handleLinkPlaceholderChange = (fileId: string, placeholder: string, targetFileId: string) => {
-        setHtmlFiles(prev => prev.map(f => {
-            if (f.id === fileId) {
-                return { ...f, linkPlaceholders: { ...f.linkPlaceholders, [placeholder]: targetFileId } };
-            }
-            return f;
-        }));
+    const handleUpdateFileName = (fileId: string, newName: string) => {
+        setHtmlFiles(prev => prev.map(f => f.id === fileId ? {...f, newFileName: newName} : f))
     };
 
-    const handleSaveApiKey = (newKey: string) => {
-        setApiKey(newKey);
-        setIsApiKeyModalOpen(false);
-        setNotification({ message: 'API-ключ сохранен!', type: 'success' });
-    };
-    
     const selectedFileData = useMemo(() => htmlFiles.find(f => f.id === selectedFileId), [htmlFiles, selectedFileId]);
     const hasMainPage = useMemo(() => htmlFiles.some(f => f.isMain), [htmlFiles]);
+    const notificationColorClasses = { success: 'bg-green-900/50 text-green-300', info: 'bg-blue-900/50 text-blue-300', error: 'bg-red-900/50 text-red-300' };
 
-    const notificationColorClasses = {
-        success: 'bg-green-900/50 text-green-300',
-        info: 'bg-blue-900/50 text-blue-300',
-        error: 'bg-red-900/50 text-red-300',
-    };
-
-    if (view === 'landing') {
-        return (
-            <div className="min-h-screen bg-gray-900 text-gray-200">
-                <LandingPage onEnter={handleEnterApp} />
-            </div>
-        );
-    }
-
-    if (view === 'pin') {
-        return (
-            <div className="min-h-screen bg-gray-900 text-gray-200">
-                <PinValidation onSuccess={handlePinSuccess} appId={APP_ID} />
-            </div>
-        );
-    }
+    if (view === 'landing') return <div className="min-h-screen bg-gray-900 text-gray-200"><LandingPage onEnter={handleEnterApp} /></div>;
+    if (view === 'pin') return <div className="min-h-screen bg-gray-900 text-gray-200"><PinValidation onSuccess={handlePinSuccess} appId={APP_ID} /></div>;
 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-200 p-4 sm:p-6 lg:p-8">
             <div className="max-w-7xl mx-auto">
                 <header className="flex justify-between items-center mb-6">
                     <div> <h1 className="text-3xl font-bold text-white">Упаковщик статичных сайтов</h1> <p className="text-gray-400">Для GitHub Pages и Vercel</p> </div>
-                    <div className="flex items-center gap-2">
-                        <button onClick={handleLogout} className="text-sm font-semibold text-gray-300 hover:text-red-400 transition-colors px-4 py-2 rounded-md hover:bg-gray-700"> Выйти </button>
-                    </div>
+                    <div className="flex items-center gap-2"> <button onClick={handleLogout} className="text-sm font-semibold text-gray-300 hover:text-red-400 transition-colors px-4 py-2 rounded-md hover:bg-gray-700"> Выйти </button> </div>
                 </header>
                 
                 {files.length === 0 ? (
@@ -414,30 +409,31 @@ const App: React.FC = () => {
                 ) : (
                     <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         <div className="lg:col-span-2">
+                            <div className="flex flex-wrap justify-between items-center gap-4 mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                                <h2 className="text-xl font-semibold text-white">Ваши страницы</h2>
+                                <div className="flex gap-2">
+                                    <label htmlFor="add-folder-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><FolderPlusIcon className="w-5 h-5" /> Папку</label>
+                                    <input type="file" id="add-folder-upload" className="hidden" onChange={handleFileChange} multiple {...{ webkitdirectory: "", directory: "" }} />
+                                    <label htmlFor="add-files-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><DocumentPlusIcon className="w-5 h-5" /> Файлы</label>
+                                    <input type="file" id="add-files-upload" className="hidden" onChange={handleFileChange} multiple />
+                                </div>
+                            </div>
                            {notification && ( <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}> {notification.message} </div> )}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {htmlFiles.map(file => (
-                                    <div key={file.id} className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${selectedFileId === file.id ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
-                                        <div className="p-4">
-                                            <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
-                                               {previewUrls[file.id] ? (
-                                                    <iframe src={previewUrls[file.id]} className="w-full h-full border-0" sandbox="allow-scripts" title={`Preview of ${file.name}`} />
-                                               ) : (
-                                                    <div className="w-full h-full flex items-center justify-center"><Spinner className="w-8 h-8 text-gray-500" /></div>
-                                               )}
-                                                <button onClick={() => previewUrls[file.id] && setFullscreenPreview({file, url: previewUrls[file.id]})} className="absolute top-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Развернуть на весь экран">
-                                                    <ExpandIcon className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                            <input type="text" value={file.newFileName} disabled={file.isMain} onChange={(e) => setHtmlFiles(prev => prev.map(f => f.id === file.id ? {...f, newFileName: e.target.value} : f))} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500" />
-                                            <div className="flex justify-between items-center mt-3">
-                                                <button onClick={() => setMainPage(file.id)} className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md transition-colors ${file.isMain ? 'text-yellow-300 bg-yellow-900/50' : 'text-gray-300 hover:bg-gray-700'}`}>
-                                                    <StarIcon className="w-4 h-4"/> {file.isMain ? 'Главная' : 'Сделать главной'}
-                                                </button>
-                                                <button onClick={() => setSelectedFileId(file.id)} className="text-sm text-cyan-400 hover:underline"> Настроить </button>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <HtmlFileCard
+                                        key={file.id}
+                                        file={file}
+                                        previewUrl={previewUrls[file.id]}
+                                        isSelected={selectedFileId === file.id}
+                                        onSetMain={setMainPage}
+                                        onSelect={setSelectedFileId}
+                                        onDelete={handleDeleteFile}
+                                        onUpdateFileName={handleUpdateFileName}
+                                        onFullscreen={(file, url) => setFullscreenPreview({ file, url })}
+                                        onAnalyze={handleAnalyzeContent}
+                                        isAnalyzing={isLoading.analyzingFileId === file.id}
+                                    />
                                 ))}
                             </div>
                         </div>
@@ -454,7 +450,9 @@ const App: React.FC = () => {
                                                     {selectedFileData.placeholders.map(p => (
                                                         <div key={p}>
                                                             <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
-                                                            <input type="text" id={p} value={selectedFileData.placeholderValues[p] || ''} onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500" />
+                                                            <div className="flex items-center gap-2">
+                                                                <input type="text" id={p} value={selectedFileData.placeholderValues[p] || ''} onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500" />
+                                                            </div>
                                                         </div>
                                                     ))}
                                                 </div>}
@@ -474,15 +472,20 @@ const App: React.FC = () => {
                                         ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
                                     ) : ( <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p> )}
                                 </div>
+                                 <div className="py-6 border-b border-gray-700">
+                                    <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
+                                    <div className="space-y-3">
+                                        <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
+                                            {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
+                                        </button>
+                                    </div>
+                                </div>
                                 <div className="py-6 border-b border-gray-700">
                                     <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
                                     <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
                                     <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
                                 </div>
                                 <div className="mt-6 space-y-3">
-                                    <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
-                                        {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
-                                    </button>
                                     <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
                                         {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
                                     </button>
@@ -495,64 +498,39 @@ const App: React.FC = () => {
             </div>
             
             <div className="fixed bottom-8 right-8 flex flex-col gap-4 z-40">
-                 <button
-                    onClick={() => setIsLegalModalOpen(true)}
-                    className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
-                    aria-label="Политика конфиденциальности и Условия использования"
-                >
-                    <ShieldCheckIcon className="w-6 h-6" />
-                </button>
-                <button
-                    onClick={() => { setTempApiKey(apiKey); setIsApiKeyModalOpen(true); }}
-                    className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
-                    aria-label="Настройки"
-                >
-                    <SettingsIcon className="w-6 h-6" />
-                </button>
-                <button
-                    onClick={() => setIsHelpModalOpen(true)}
-                    className="bg-cyan-600 hover:bg-cyan-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110"
-                    aria-label="Открыть справку"
-                >
-                    <HelpIcon className="w-6 h-6" />
-                </button>
+                 <button onClick={() => setIsLegalModalOpen(true)} className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110" aria-label="Политика конфиденциальности и Условия использования"><ShieldCheckIcon className="w-6 h-6" /></button>
+                <button onClick={() => setIsSettingsModalOpen(true)} className="bg-gray-600 hover:bg-gray-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110" aria-label="Настройки API"><SettingsIcon className="w-6 h-6" /></button>
+                <button onClick={() => setIsHelpModalOpen(true)} className="bg-cyan-600 hover:bg-cyan-500 text-white rounded-full p-4 shadow-lg transition-transform transform hover:scale-110" aria-label="Открыть справку"><HelpIcon className="w-6 h-6" /></button>
             </div>
 
             <Modal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} title="Описание и инструкция"> <HelpContent /> </Modal>
-            
             <Modal isOpen={isLegalModalOpen} onClose={() => setIsLegalModalOpen(false)} title="Политика конфиденциальности и Условия использования"> <LegalContent /> </Modal>
-
-            <Modal isOpen={isApiKeyModalOpen} onClose={() => setIsApiKeyModalOpen(false)} title="Настройка API-ключа Google Gemini">
+            <Modal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} title="Настройки API ключа">
                 <div className="space-y-4">
                     <p className="text-sm text-gray-400">
-                        Для использования функции оптимизации имен файлов вам понадобится API-ключ от Google Gemini. Вы можете получить его бесплатно в <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google AI Studio</a>.
-                    </p>
-                    <p className="text-xs text-gray-500">
-                        Ваш ключ хранится локально в вашем браузере и используется только для отправки запросов в Google.
+                        Для использования функций на базе ИИ (оптимизация имен, генерация контента) вам понадобится API-ключ от Google AI Studio.
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline ml-1">Получить ключ</a>
                     </p>
                     <div>
-                        <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300 mb-1">
-                            Ваш API-ключ
-                        </label>
+                        <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300 mb-1">Ваш Google Gemini API ключ</label>
                         <input
                             id="api-key-input"
                             type="password"
-                            autoComplete="off"
-                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
-                            placeholder="Введите ваш ключ..."
                             value={tempApiKey}
                             onChange={(e) => setTempApiKey(e.target.value)}
+                            className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500"
+                            placeholder="Введите ваш API ключ"
                         />
                     </div>
                     <div className="flex justify-end gap-3">
-                        <button
-                            onClick={() => setIsApiKeyModalOpen(false)}
-                            className="bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-4 rounded-md transition-colors"
+                         <button
+                            onClick={() => setIsSettingsModalOpen(false)}
+                            className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-md transition-colors"
                         >
                             Отмена
                         </button>
                         <button
-                            onClick={() => handleSaveApiKey(tempApiKey)}
+                            onClick={handleSaveApiKey}
                             className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors"
                         >
                             Сохранить
@@ -560,14 +538,43 @@ const App: React.FC = () => {
                     </div>
                 </div>
             </Modal>
-
             <Modal isOpen={isDeployModalOpen} onClose={() => setIsDeployModalOpen(false)} title="Сайт готов к развертыванию!">
                 <div className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: deploymentInstructions.replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1.5 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline">$1</a>').replace(/\n/g, '<br />') }} />
             </Modal>
-            
-            {fullscreenPreview && (
-                <Modal isOpen={!!fullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Предпросмотр: ${fullscreenPreview.file.name}`} size="large">
-                    <iframe key={fullscreenPreview.file.id} src={fullscreenPreview.url} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${fullscreenPreview.file.name}`} />
+             <Modal isOpen={isAnalysisReportModalOpen} onClose={() => setIsAnalysisReportModalOpen(false)} title={`Отчет AI-Анализа для: ${selectedFileData?.newFileName || ''}`}>
+                {isLoading.analyzingFileId && !analysisReportContent ? (
+                    <div className="flex items-center justify-center h-full">
+                        <Spinner className="w-12 h-12 text-purple-400" />
+                        <span className="ml-4 text-lg">Анализирую страницу...</span>
+                    </div>
+                ) : (
+                    <>
+                        <div 
+                            className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none flex-grow overflow-y-auto pr-4" 
+                            dangerouslySetInnerHTML={{ __html: analysisReportContent.replace(/```html([\s\S]*?)```/g, '<pre class="bg-gray-900 rounded-md p-3"><code class="language-html">$1</code></pre>').replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\n/g, '<br />') }} 
+                        />
+                        <div className="flex justify-end gap-3 pt-4 border-t border-gray-700 flex-shrink-0">
+                            <button
+                                onClick={() => setIsAnalysisReportModalOpen(false)}
+                                className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-md transition-colors"
+                            >
+                                Закрыть
+                            </button>
+                            <button
+                                onClick={handleApplyFixes}
+                                disabled={isLoading.applyingFixes}
+                                className="bg-green-600 hover:bg-green-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-green-800 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {isLoading.applyingFixes ? <Spinner className="w-5 h-5"/> : null}
+                                Применить изменения
+                            </button>
+                        </div>
+                    </>
+                )}
+            </Modal>
+            {isFullscreenPreview && (
+                <Modal isOpen={!!isFullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Предпросмотр: ${isFullscreenPreview.file.name}`} size="large">
+                    <iframe key={isFullscreenPreview.file.id} src={isFullscreenPreview.url} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />
                 </Modal>
             )}
         </div>
