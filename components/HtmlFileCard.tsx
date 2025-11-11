@@ -10,7 +10,7 @@ interface HtmlFileCardProps {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdateFileName: (id: string, newName: string) => void;
-  onFullscreen: (file: HtmlFile, url: string) => void;
+  onFullscreen: (file: HtmlFile) => void;
   onAnalyze: (id: string) => void;
   isAnalyzing: boolean;
 }
@@ -39,28 +39,31 @@ export const HtmlFileCard: React.FC<HtmlFileCardProps> = ({
   return (
     <div className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${isSelected ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
       <div className="p-4">
-        <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
-          {previewUrl ? (
-            <iframe src={previewUrl} className="w-full h-full border-0" sandbox="allow-scripts" title={`Preview of ${file.name}`} />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center"><Spinner className="w-8 h-8 text-gray-500" /></div>
-          )}
-          <div className="absolute top-2 right-2 flex gap-2">
-            <button
-                onClick={() => previewUrl && onFullscreen(file, previewUrl)}
-                className="p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Развернуть на весь экран"
-            >
-                <ExpandIcon className="w-4 h-4" />
-            </button>
+        <div className="flex items-start justify-between mb-2">
+            <span className="text-xs text-gray-400 bg-gray-700/50 px-2 py-1 rounded">{file.path}</span>
             <button
                 onClick={() => onDelete(file.id)}
-                className="p-1.5 bg-red-900/60 rounded-full text-red-300 hover:bg-red-800/80 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                className="p-1.5 bg-gray-700 rounded-full text-gray-400 hover:bg-red-800/80 hover:text-white transition-colors"
                 aria-label="Удалить файл"
             >
                 <TrashIcon className="w-4 h-4" />
             </button>
-          </div>
+        </div>
+        <div className="relative aspect-video bg-gray-700 rounded-md overflow-hidden mb-3 group">
+            {previewUrl ? (
+                <iframe src={previewUrl} className="w-full h-full border-0" sandbox="allow-scripts" title={`Preview of ${file.name}`} />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center"><Spinner className="w-8 h-8 text-gray-500" /></div>
+            )}
+             <div className="absolute top-2 right-2 flex gap-2">
+                <button
+                    onClick={() => previewUrl && onFullscreen(file)}
+                    className="p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/75 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="Развернуть на весь экран"
+                >
+                    <ExpandIcon className="w-4 h-4" />
+                </button>
+            </div>
         </div>
         <input
           type="text"
@@ -93,7 +96,7 @@ export const HtmlFileCard: React.FC<HtmlFileCardProps> = ({
                 className="w-full flex justify-center items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold py-2 px-3 rounded-md transition-colors disabled:bg-purple-800 disabled:cursor-not-allowed text-sm"
              >
                 {isAnalyzing ? <Spinner className="w-5 h-5"/> : <AnalyticsIcon className="w-5 h-5"/>} 
-                <span>{isAnalyzing ? 'Анализ...' : 'AI-Анализ'}</span>
+                <span>{isAnalyzing ? 'Анализ...' : 'Провести аудит'}</span>
             </button>
         </div>
       </div>

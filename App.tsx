@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { analyzeHtmlContent, optimizeFileName, applyAnalysisFixes } from './services/geminiService';
-import { UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, SettingsIcon, ShieldCheckIcon, FolderPlusIcon, DocumentPlusIcon, AnalyticsIcon } from './components/icons';
+import { UploadIcon, MagicIcon, ZipIcon, HelpIcon, Spinner, SettingsIcon, ShieldCheckIcon, FolderPlusIcon, DocumentPlusIcon, AnalyticsIcon, EyeIcon, CodeBracketIcon } from './components/icons';
 import { HtmlFileCard } from './components/HtmlFileCard';
 import Modal from './components/Modal';
 import JSZip from 'jszip';
@@ -12,7 +12,7 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 import { AUTH_STORAGE_KEY, APP_ID } from './constants';
 import { LandingPage } from './components/LandingPage';
 import PinValidation from './components/PinValidation';
-import { substituteAllPlaceholders, createPreviewUrl, getDeploymentInstructions } from './utils';
+import { substituteAllPlaceholders, createPreviewUrl, getDeploymentInstructions, parseMarkdown } from './utils';
 
 
 const App: React.FC = () => {
@@ -30,7 +30,7 @@ const App: React.FC = () => {
     const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
-    const [isFullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, url: string} | null>(null);
+    const [isFullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, viewMode: 'preview' | 'code'} | null>(null);
     const [globalScripts, setGlobalScripts] = useState<string>('');
     
     const [apiKey, setApiKey] = useLocalStorage<string>('gemini-api-key', '');
@@ -321,14 +321,29 @@ const App: React.FC = () => {
 
         try {
             const fixedHtml = await applyAnalysisFixes(fileToFix.content, apiKey);
-            setHtmlFiles(prev => 
-                prev.map(f => 
-                    f.id === selectedFileId ? { ...f, content: fixedHtml } : f
-                )
+            
+            const newHtmlFiles = htmlFiles.map(f =>
+                f.id === selectedFileId ? { ...f, content: fixedHtml } : f
             );
+            setHtmlFiles(newHtmlFiles);
+
+            const newFiles = files.map(f =>
+                f.id === selectedFileId ? { ...f, content: fixedHtml } : f
+            );
+            setFiles(newFiles);
+
+            if (isFullscreenPreview && isFullscreenPreview.file.id === selectedFileId) {
+                const updatedFile = newHtmlFiles.find(f => f.id === selectedFileId);
+                if(updatedFile) {
+                    setFullscreenPreview(prev => prev ? { ...prev, file: updatedFile } : null);
+                }
+            }
+            
             setNotification({ message: `Изменения для "${fileToFix.newFileName}" успешно применены!`, type: 'success' });
-            setSidebarView('settings');
-            setCurrentAnalysisReport(null);
+            // Let user review the applied fixes in the analysis tab if they wish
+            // setSidebarView('settings');
+            // setCurrentAnalysisReport(null);
+            handleAnalyzeContent(selectedFileId); // Re-analyze to show the new state
         } catch (error) {
             console.error("Error applying fixes:", error);
             let errorMessage = "Произошла неизвестная ошибка при применении исправлений.";
@@ -391,6 +406,26 @@ const App: React.FC = () => {
         setHtmlFiles(prev => prev.map(f => f.id === fileId ? {...f, newFileName: newName} : f))
     };
 
+    const handleUpdateFileContent = useCallback((fileId: string, newContent: string) => {
+        let updatedFile: HtmlFile | undefined;
+        
+        const newHtmlFiles = htmlFiles.map(hf => {
+            if (hf.id === fileId) {
+                updatedFile = { ...hf, content: newContent };
+                return updatedFile;
+            }
+            return hf;
+        });
+        setHtmlFiles(newHtmlFiles);
+
+        const newFiles = files.map(f => (f.id === fileId ? { ...f, content: newContent } : f));
+        setFiles(newFiles);
+        
+        if (isFullscreenPreview && isFullscreenPreview.file.id === fileId && updatedFile) {
+            setFullscreenPreview(prev => prev ? { ...prev, file: updatedFile } : null);
+        }
+    }, [htmlFiles, files, isFullscreenPreview]);
+
     const selectedFileData = useMemo(() => htmlFiles.find(f => f.id === selectedFileId), [htmlFiles, selectedFileId]);
     const hasMainPage = useMemo(() => htmlFiles.some(f => f.isMain), [htmlFiles]);
     const notificationColorClasses = { success: 'bg-green-900/50 text-green-300', info: 'bg-blue-900/50 text-blue-300', error: 'bg-red-900/50 text-red-300' };
@@ -399,28 +434,25 @@ const App: React.FC = () => {
     if (view === 'pin') return <div className="min-h-screen bg-gray-900 text-gray-200"><PinValidation onSuccess={handlePinSuccess} appId={APP_ID} /></div>;
 
     const renderSidebarContent = () => {
-        if (!selectedFileData) {
-            return (
+        if (!selectedFileData && htmlFiles.length > 0) {
+             return (
                 <div className="sticky top-0 bg-gray-800 rounded-lg shadow-lg flex flex-col h-[calc(100vh-4rem)]">
                     <div className="flex border-b border-gray-700 flex-shrink-0">
                         <button
                             className={`flex-1 py-3 px-4 text-center font-semibold text-sm bg-gray-700 text-white flex items-center justify-center gap-2`}
                         >
                             <SettingsIcon className="w-5 h-5" />
-                            Настройки
+                            Глобальные настройки
                         </button>
                     </div>
                     <div className="flex-grow overflow-y-auto p-6">
-                        <div className="pb-6 border-b border-gray-700">
-                            <h2 className="text-xl font-semibold mb-1 text-white">Общие настройки</h2>
-                            <p className="text-sm text-gray-400">Выберите HTML файл слева для настройки его плейсхолдеров.</p>
-                        </div>
-                        <div className="py-6 border-b border-gray-700">
+                         <div className="py-6 border-b border-gray-700">
                             <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
                             <div className="space-y-3">
                                 <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
-                                    {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
+                                    {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать все имена</span>
                                 </button>
+                                <p className="text-sm text-gray-400">Переименовать все страницы (кроме главной) для лучшего SEO.</p>
                             </div>
                         </div>
                         <div className="py-6 border-b border-gray-700">
@@ -429,15 +461,22 @@ const App: React.FC = () => {
                             <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
                         </div>
                         <div className="mt-6 space-y-3">
+                            <h2 className="text-xl font-semibold mb-4 text-white">Упаковка</h2>
                             <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
-                                {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
+                                {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Упаковать ZIP-архив</span>
                             </button>
-                            <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2"> Начать заново </button>
+                             <p className="text-sm text-gray-400">Создать готовый для загрузки ZIP-архив. <span className={!hasMainPage ? 'text-yellow-400' : ''}>{!hasMainPage ? 'Сначала выберите главную страницу.' : ''}</span></p>
+                        </div>
+                         <div className="mt-auto pt-6">
+                             <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors"> Начать заново </button>
                         </div>
                     </div>
                 </div>
             );
         }
+        
+        if (!selectedFileData) return null;
+
 
         return (
             <div className="sticky top-0 bg-gray-800 rounded-lg shadow-lg flex flex-col h-[calc(100vh-4rem)]">
@@ -450,7 +489,12 @@ const App: React.FC = () => {
                         Настройки
                     </button>
                     <button
-                        onClick={() => setSidebarView('analysis')}
+                        onClick={() => {
+                            setSidebarView('analysis');
+                            if (!currentAnalysisReport) { // Trigger analysis if not already done
+                                handleAnalyzeContent(selectedFileData.id);
+                            }
+                        }}
                         className={`flex-1 py-3 px-4 text-center font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${sidebarView === 'analysis' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-200'}`}
                     >
                          <AnalyticsIcon className="w-5 h-5" />
@@ -491,24 +535,10 @@ const App: React.FC = () => {
                                 </form>
                             ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>}
                         </div>
-                         <div className="py-6 border-b border-gray-700">
-                            <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
-                            <div className="space-y-3">
-                                <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
-                                    {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
-                                </button>
-                            </div>
-                        </div>
-                        <div className="py-6 border-b border-gray-700">
-                            <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
-                            <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
-                            <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
-                        </div>
-                        <div className="mt-6 space-y-3">
-                            <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
-                                {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
-                            </button>
-                            <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2"> Начать заново </button>
+                        <div className="pt-6">
+                           <button onClick={() => setSelectedFileId(null)} className="w-full text-center text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+                                Показать глобальные настройки
+                           </button>
                         </div>
                     </div>
                 )}
@@ -528,7 +558,7 @@ const App: React.FC = () => {
                                     <p className="text-sm text-gray-400 mb-4 truncate">{selectedFileData.newFileName}</p>
                                     <div
                                         className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none"
-                                        dangerouslySetInnerHTML={{ __html: (currentAnalysisReport || '').replace(/```html([\s\S]*?)```/g, '<pre class="bg-gray-900 rounded-md p-3"><code class="language-html">$1</code></pre>').replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\n/g, '<br />') }}
+                                        dangerouslySetInnerHTML={{ __html: parseMarkdown(currentAnalysisReport || '') }}
                                     />
                                 </>
                             )}
@@ -541,6 +571,14 @@ const App: React.FC = () => {
                             >
                                 {isLoading.applyingFixes ? <Spinner className="w-5 h-5" /> : null}
                                 Применить изменения
+                            </button>
+                             <button
+                                onClick={() => handleAnalyzeContent(selectedFileData.id)}
+                                disabled={isLoading.analyzingFileId === selectedFileId}
+                                className="w-full bg-purple-600/50 hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-purple-800 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {isLoading.analyzingFileId === selectedFileId ? <Spinner className="w-5 h-5" /> : null}
+                                Провести аудит заново
                             </button>
                         </div>
                     </>
@@ -597,7 +635,7 @@ const App: React.FC = () => {
                                             onSelect={handleSelectFile}
                                             onDelete={handleDeleteFile}
                                             onUpdateFileName={handleUpdateFileName}
-                                            onFullscreen={(file, url) => setFullscreenPreview({ file, url })}
+                                            onFullscreen={file => setFullscreenPreview({ file, viewMode: 'preview' })}
                                             onAnalyze={handleAnalyzeContent}
                                             isAnalyzing={isLoading.analyzingFileId === file.id}
                                         />
@@ -658,8 +696,35 @@ const App: React.FC = () => {
             </Modal>
             
             {isFullscreenPreview && (
-                <Modal isOpen={!!isFullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Предпросмотр: ${isFullscreenPreview.file.name}`} size="large">
-                    <iframe key={isFullscreenPreview.file.id} src={isFullscreenPreview.url} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />
+                <Modal isOpen={!!isFullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Редактор: ${isFullscreenPreview.file.newFileName}`} size="large">
+                    <div className="flex flex-col h-full">
+                        <div className="flex-shrink-0 mb-4 flex items-center gap-2 p-1 bg-gray-900 rounded-lg self-start">
+                            <button
+                                onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'preview' } : null)}
+                                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'preview' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
+                            >
+                                <EyeIcon className="w-5 h-5" /> Превью
+                            </button>
+                            <button
+                                onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'code' } : null)}
+                                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'code' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
+                            >
+                                <CodeBracketIcon className="w-5 h-5" /> Код
+                            </button>
+                        </div>
+                        <div className="flex-grow relative bg-gray-900 rounded-lg">
+                            {isFullscreenPreview.viewMode === 'preview' ? (
+                                <iframe key={isFullscreenPreview.file.id} src={previewUrls[isFullscreenPreview.file.id]} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />
+                            ) : (
+                                <textarea
+                                    value={isFullscreenPreview.file.content}
+                                    onChange={(e) => handleUpdateFileContent(isFullscreenPreview.file.id, e.target.value)}
+                                    className="w-full h-full absolute inset-0 bg-gray-900 text-gray-300 font-mono text-sm p-4 resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500 rounded-md"
+                                    spellCheck="false"
+                                />
+                            )}
+                        </div>
+                    </div>
                 </Modal>
             )}
         </div>
