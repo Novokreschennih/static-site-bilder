@@ -32,11 +32,14 @@ const App: React.FC = () => {
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
     const [isFullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, url: string} | null>(null);
     const [globalScripts, setGlobalScripts] = useState<string>('');
-    const [isAnalysisReportModalOpen, setIsAnalysisReportModalOpen] = useState(false);
-    const [analysisReportContent, setAnalysisReportContent] = useState('');
     
     const [apiKey, setApiKey] = useLocalStorage<string>('gemini-api-key', '');
     const [tempApiKey, setTempApiKey] = useState(apiKey);
+
+    // State for the sidebar view
+    const [sidebarView, setSidebarView] = useState<'settings' | 'analysis'>('settings');
+    const [currentAnalysisReport, setCurrentAnalysisReport] = useState<string | null>(null);
+
 
     useEffect(() => {
         setTempApiKey(apiKey);
@@ -61,6 +64,8 @@ const App: React.FC = () => {
         setSelectedFileId(null);
         setNotification(null);
         setGlobalScripts('');
+        setSidebarView('settings');
+        setCurrentAnalysisReport(null);
     }, [files, previewUrls]);
 
     const handleEnterApp = () => {
@@ -69,6 +74,12 @@ const App: React.FC = () => {
 
     const handlePinSuccess = () => {
         setIsAuthenticated(true);
+    };
+    
+    const handleSelectFile = (id: string) => {
+        setSelectedFileId(id);
+        setSidebarView('settings');
+        setCurrentAnalysisReport(null);
     };
 
     const handleLogout = useCallback(() => {
@@ -263,10 +274,14 @@ const App: React.FC = () => {
 
     const handleAnalyzeContent = async (fileId: string) => {
         setNotification(null);
-        setSelectedFileId(fileId); // Устанавливаем контекст для модального окна
+        setSelectedFileId(fileId);
+        setSidebarView('analysis');
+        setCurrentAnalysisReport(null);
+
         if (!apiKey) {
             setNotification({ message: 'Пожалуйста, введите ваш API ключ в настройках.', type: 'error' });
             setIsSettingsModalOpen(true);
+            setCurrentAnalysisReport('## Ошибка\n\nНеобходимо ввести API-ключ в настройках для использования этой функции.');
             return;
         }
         
@@ -274,12 +289,10 @@ const App: React.FC = () => {
         if (!fileToAnalyze) return;
 
         setIsLoading(prev => ({ ...prev, analyzingFileId: fileId }));
-        setAnalysisReportContent('');
-        setIsAnalysisReportModalOpen(true);
-
+        
         try {
             const report = await analyzeHtmlContent(fileToAnalyze.content, apiKey);
-            setAnalysisReportContent(report);
+            setCurrentAnalysisReport(report);
         } catch (error) {
             console.error("Error during content analysis:", error);
             let errorMessage = "Произошла неизвестная ошибка при анализе.";
@@ -291,14 +304,14 @@ const App: React.FC = () => {
                     errorMessage = error.message;
                 }
             }
-            setAnalysisReportContent(`## Ошибка анализа\n\n${errorMessage}`);
+            setCurrentAnalysisReport(`## Ошибка анализа\n\n${errorMessage}`);
         } finally {
             setIsLoading(prev => ({ ...prev, analyzingFileId: null }));
         }
     };
     
     const handleApplyFixes = async () => {
-        if (!selectedFileId || !analysisReportContent) return;
+        if (!selectedFileId) return;
         
         const fileToFix = htmlFiles.find(f => f.id === selectedFileId);
         if (!fileToFix) return;
@@ -314,7 +327,8 @@ const App: React.FC = () => {
                 )
             );
             setNotification({ message: `Изменения для "${fileToFix.newFileName}" успешно применены!`, type: 'success' });
-            setIsAnalysisReportModalOpen(false);
+            setSidebarView('settings');
+            setCurrentAnalysisReport(null);
         } catch (error) {
             console.error("Error applying fixes:", error);
             let errorMessage = "Произошла неизвестная ошибка при применении исправлений.";
@@ -384,6 +398,158 @@ const App: React.FC = () => {
     if (view === 'landing') return <div className="min-h-screen bg-gray-900 text-gray-200"><LandingPage onEnter={handleEnterApp} /></div>;
     if (view === 'pin') return <div className="min-h-screen bg-gray-900 text-gray-200"><PinValidation onSuccess={handlePinSuccess} appId={APP_ID} /></div>;
 
+    const renderSidebarContent = () => {
+        if (!selectedFileData) {
+            return (
+                <div className="sticky top-0 bg-gray-800 rounded-lg shadow-lg flex flex-col h-[calc(100vh-4rem)]">
+                    <div className="flex border-b border-gray-700 flex-shrink-0">
+                        <button
+                            className={`flex-1 py-3 px-4 text-center font-semibold text-sm bg-gray-700 text-white flex items-center justify-center gap-2`}
+                        >
+                            <SettingsIcon className="w-5 h-5" />
+                            Настройки
+                        </button>
+                    </div>
+                    <div className="flex-grow overflow-y-auto p-6">
+                        <div className="pb-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-1 text-white">Общие настройки</h2>
+                            <p className="text-sm text-gray-400">Выберите HTML файл слева для настройки его плейсхолдеров.</p>
+                        </div>
+                        <div className="py-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
+                            <div className="space-y-3">
+                                <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
+                                    {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="py-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
+                            <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
+                            <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
+                        </div>
+                        <div className="mt-6 space-y-3">
+                            <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
+                                {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
+                            </button>
+                            <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2"> Начать заново </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="sticky top-0 bg-gray-800 rounded-lg shadow-lg flex flex-col h-[calc(100vh-4rem)]">
+                <div className="flex border-b border-gray-700 flex-shrink-0">
+                    <button
+                        onClick={() => setSidebarView('settings')}
+                        className={`flex-1 py-3 px-4 text-center font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${sidebarView === 'settings' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-200'}`}
+                    >
+                        <SettingsIcon className="w-5 h-5" />
+                        Настройки
+                    </button>
+                    <button
+                        onClick={() => setSidebarView('analysis')}
+                        className={`flex-1 py-3 px-4 text-center font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${sidebarView === 'analysis' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-200'}`}
+                    >
+                         <AnalyticsIcon className="w-5 h-5" />
+                        AI-Анализ
+                    </button>
+                </div>
+
+                {sidebarView === 'settings' && (
+                    <div className="flex-grow overflow-y-auto p-6">
+                        <div className="pb-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-1 text-white">Плейсхолдеры</h2>
+                            <p className="text-sm text-gray-400 mb-4 truncate">{selectedFileData.newFileName}</p>
+                            {(selectedFileData.placeholders.length > 0 || Object.keys(selectedFileData.linkPlaceholders).length > 0) ? (
+                                <form>
+                                    {selectedFileData.placeholders.length > 0 && <div className="space-y-4">
+                                        <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">Текстовые поля</h3>
+                                        {selectedFileData.placeholders.map(p => (
+                                            <div key={p}>
+                                                <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="text" id={p} value={selectedFileData.placeholderValues[p] || ''} onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>}
+                                    {Object.keys(selectedFileData.linkPlaceholders).length > 0 && <div className="space-y-4 mt-6">
+                                        <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">Ссылки на страницы</h3>
+                                        {Object.keys(selectedFileData.linkPlaceholders).map(p => (
+                                            <div key={p}>
+                                                <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
+                                                <select id={p} value={selectedFileData.linkPlaceholders[p] || ''} onChange={(e) => handleLinkPlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 appearance-none bg-no-repeat bg-right pr-8" style={{backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundSize: '1.5em 1.5em'}}>
+                                                    <option value="">-- Выберите страницу --</option>
+                                                    {htmlFiles.filter(f => f.id !== selectedFileData.id).map(optionFile => ( <option key={optionFile.id} value={optionFile.id}> {optionFile.newFileName} </option> ))}
+                                                </select>
+                                            </div>
+                                        ))}
+                                    </div>}
+                                </form>
+                            ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>}
+                        </div>
+                         <div className="py-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
+                            <div className="space-y-3">
+                                <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
+                                    {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="py-6 border-b border-gray-700">
+                            <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
+                            <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
+                            <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
+                        </div>
+                        <div className="mt-6 space-y-3">
+                            <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
+                                {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
+                            </button>
+                            <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2"> Начать заново </button>
+                        </div>
+                    </div>
+                )}
+                
+                {sidebarView === 'analysis' && (
+                    <>
+                        <div className="flex-grow overflow-y-auto p-6">
+                            {isLoading.analyzingFileId === selectedFileId && !currentAnalysisReport ? (
+                                <div className="flex flex-col items-center justify-center h-full text-center">
+                                    <Spinner className="w-12 h-12 text-purple-400" />
+                                    <span className="mt-4 text-lg">Анализирую страницу...</span>
+                                    <p className="text-sm text-gray-400 mt-2">Это может занять до 30 секунд.</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <h2 className="text-xl font-semibold text-white mb-1">Отчет AI-Анализа</h2>
+                                    <p className="text-sm text-gray-400 mb-4 truncate">{selectedFileData.newFileName}</p>
+                                    <div
+                                        className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none"
+                                        dangerouslySetInnerHTML={{ __html: (currentAnalysisReport || '').replace(/```html([\s\S]*?)```/g, '<pre class="bg-gray-900 rounded-md p-3"><code class="language-html">$1</code></pre>').replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\n/g, '<br />') }}
+                                    />
+                                </>
+                            )}
+                        </div>
+                        <div className="p-6 border-t border-gray-700 flex-shrink-0 space-y-3">
+                            <button
+                                onClick={handleApplyFixes}
+                                disabled={isLoading.applyingFixes || !currentAnalysisReport || currentAnalysisReport.includes("Ошибка")}
+                                className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-green-800 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {isLoading.applyingFixes ? <Spinner className="w-5 h-5" /> : null}
+                                Применить изменения
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        );
+    };
+
+
     return (
         <div className="min-h-screen bg-gray-900 text-gray-200 p-4 sm:p-6 lg:p-8">
             <div className="max-w-7xl mx-auto">
@@ -392,109 +558,58 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-2"> <button onClick={handleLogout} className="text-sm font-semibold text-gray-300 hover:text-red-400 transition-colors px-4 py-2 rounded-md hover:bg-gray-700"> Выйти </button> </div>
                 </header>
                 
-                {files.length === 0 ? (
-                    <div onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={`relative border-2 border-dashed rounded-lg p-12 text-center transition-colors duration-300 ${isDragging ? 'border-cyan-500 bg-gray-800' : 'border-gray-600 hover:border-cyan-400'}`}>
-                        <input type="file" id="folder-upload" className="hidden" onChange={handleFileChange} multiple {...{ webkitdirectory: "", directory: "" }} />
-                        <input type="file" id="files-upload" className="hidden" onChange={handleFileChange} multiple />
-                        <div className="flex flex-col items-center">
-                            <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
-                            <span className="text-xl font-medium text-white">Перетащите папку или файлы сюда</span>
-                            <span className="text-gray-400 mt-1 mb-4">или выберите способ загрузки</span>
-                            <div className="flex flex-col sm:flex-row gap-4">
-                                <label htmlFor="folder-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors"> Выбрать папку </label>
-                                <label htmlFor="files-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors"> Выбрать файлы </label>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        <div className="lg:col-span-2">
-                            <div className="flex flex-wrap justify-between items-center gap-4 mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                                <h2 className="text-xl font-semibold text-white">Ваши страницы</h2>
-                                <div className="flex gap-2">
-                                    <label htmlFor="add-folder-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><FolderPlusIcon className="w-5 h-5" /> Папку</label>
-                                    <input type="file" id="add-folder-upload" className="hidden" onChange={handleFileChange} multiple {...{ webkitdirectory: "", directory: "" }} />
-                                    <label htmlFor="add-files-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><DocumentPlusIcon className="w-5 h-5" /> Файлы</label>
-                                    <input type="file" id="add-files-upload" className="hidden" onChange={handleFileChange} multiple />
+                <main>
+                    {files.length === 0 ? (
+                        <div onDragOver={e => { e.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={`relative border-2 border-dashed rounded-lg p-12 text-center transition-colors duration-300 h-full flex flex-col justify-center ${isDragging ? 'border-cyan-500 bg-gray-800' : 'border-gray-600 hover:border-cyan-400'}`}>
+                            <input type="file" id="folder-upload" className="hidden" onChange={handleFileChange} multiple {...{ webkitdirectory: "", directory: "" }} />
+                            <input type="file" id="files-upload" className="hidden" onChange={handleFileChange} multiple />
+                            <div className="flex flex-col items-center">
+                                <UploadIcon className="w-12 h-12 text-gray-500 mb-4"/>
+                                <span className="text-xl font-medium text-white">Перетащите папку или файлы сюда</span>
+                                <span className="text-gray-400 mt-1 mb-4">или выберите способ загрузки</span>
+                                <div className="flex flex-col sm:flex-row gap-4">
+                                    <label htmlFor="folder-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors"> Выбрать папку </label>
+                                    <label htmlFor="files-upload" className="cursor-pointer text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg transition-colors"> Выбрать файлы </label>
                                 </div>
                             </div>
-                           {notification && ( <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}> {notification.message} </div> )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {htmlFiles.map(file => (
-                                    <HtmlFileCard
-                                        key={file.id}
-                                        file={file}
-                                        previewUrl={previewUrls[file.id]}
-                                        isSelected={selectedFileId === file.id}
-                                        onSetMain={setMainPage}
-                                        onSelect={setSelectedFileId}
-                                        onDelete={handleDeleteFile}
-                                        onUpdateFileName={handleUpdateFileName}
-                                        onFullscreen={(file, url) => setFullscreenPreview({ file, url })}
-                                        onAnalyze={handleAnalyzeContent}
-                                        isAnalyzing={isLoading.analyzingFileId === file.id}
-                                    />
-                                ))}
-                            </div>
                         </div>
-
-                        <aside className="lg:col-span-1">
-                            <div className="sticky top-8 bg-gray-800 rounded-lg p-6 shadow-lg">
-                                <div className="pb-6 border-b border-gray-700">
-                                    <h2 className="text-xl font-semibold mb-4 text-white">Настройки страницы</h2>
-                                    {selectedFileData ? (
-                                        (selectedFileData.placeholders.length > 0 || Object.keys(selectedFileData.linkPlaceholders).length > 0) ? (
-                                            <form>
-                                                {selectedFileData.placeholders.length > 0 && <div className="space-y-4">
-                                                    <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">Текстовые поля</h3>
-                                                    {selectedFileData.placeholders.map(p => (
-                                                        <div key={p}>
-                                                            <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
-                                                            <div className="flex items-center gap-2">
-                                                                <input type="text" id={p} value={selectedFileData.placeholderValues[p] || ''} onChange={(e) => handlePlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500" />
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>}
-                                                {Object.keys(selectedFileData.linkPlaceholders).length > 0 && <div className="space-y-4 mt-6">
-                                                     <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">Ссылки на страницы</h3>
-                                                    {Object.keys(selectedFileData.linkPlaceholders).map(p => (
-                                                        <div key={p}>
-                                                            <label htmlFor={p} className="block text-sm font-medium text-gray-300 mb-1">{p}</label>
-                                                            <select id={p} value={selectedFileData.linkPlaceholders[p] || ''} onChange={(e) => handleLinkPlaceholderChange(selectedFileData.id, p, e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 appearance-none bg-no-repeat bg-right pr-8" style={{backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundSize: '1.5em 1.5em'}}>
-                                                                <option value="">-- Выберите страницу --</option>
-                                                                {htmlFiles.filter(f => f.id !== selectedFileData.id).map(optionFile => ( <option key={optionFile.id} value={optionFile.id}> {optionFile.newFileName} </option> ))}
-                                                            </select>
-                                                        </div>
-                                                    ))}
-                                                </div>}
-                                            </form>
-                                        ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>
-                                    ) : ( <p className="text-gray-400">Выберите HTML файл для настройки его плейсхолдеров.</p> )}
-                                </div>
-                                 <div className="py-6 border-b border-gray-700">
-                                    <h2 className="text-xl font-semibold mb-4 text-white">Инструменты ИИ</h2>
-                                    <div className="space-y-3">
-                                        <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
-                                            {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать имена</span>
-                                        </button>
+                    ) : (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            <div className="lg:col-span-2">
+                                <div className="flex flex-wrap justify-between items-center gap-4 mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                                    <h2 className="text-xl font-semibold text-white">Ваши страницы</h2>
+                                    <div className="flex gap-2">
+                                        <label htmlFor="add-folder-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><FolderPlusIcon className="w-5 h-5" /> Папку</label>
+                                        <input type="file" id="add-folder-upload" className="hidden" onChange={handleFileChange} multiple {...{ webkitdirectory: "", directory: "" }} />
+                                        <label htmlFor="add-files-upload" className="cursor-pointer text-sm flex items-center gap-2 text-cyan-400 font-semibold hover:text-cyan-300 bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg transition-colors"><DocumentPlusIcon className="w-5 h-5" /> Файлы</label>
+                                        <input type="file" id="add-files-upload" className="hidden" onChange={handleFileChange} multiple />
                                     </div>
                                 </div>
-                                <div className="py-6 border-b border-gray-700">
-                                    <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
-                                    <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
-                                    <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
-                                </div>
-                                <div className="mt-6 space-y-3">
-                                    <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
-                                        {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Подготовить для GitHub</span>
-                                    </button>
-                                    <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors mt-2"> Начать заново </button>
+                               {notification && ( <div className={`p-4 rounded-lg mb-4 text-sm ${notificationColorClasses[notification.type]}`}> {notification.message} </div> )}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {htmlFiles.map(file => (
+                                        <HtmlFileCard
+                                            key={file.id}
+                                            file={file}
+                                            previewUrl={previewUrls[file.id]}
+                                            isSelected={selectedFileId === file.id}
+                                            onSetMain={setMainPage}
+                                            onSelect={handleSelectFile}
+                                            onDelete={handleDeleteFile}
+                                            onUpdateFileName={handleUpdateFileName}
+                                            onFullscreen={(file, url) => setFullscreenPreview({ file, url })}
+                                            onAnalyze={handleAnalyzeContent}
+                                            isAnalyzing={isLoading.analyzingFileId === file.id}
+                                        />
+                                    ))}
                                 </div>
                             </div>
-                        </aside>
-                    </main>
-                )}
+                             <aside className="lg:col-span-1">
+                                {renderSidebarContent()}
+                            </aside>
+                        </div>
+                    )}
+                </main>
             </div>
             
             <div className="fixed bottom-8 right-8 flex flex-col gap-4 z-40">
@@ -541,37 +656,7 @@ const App: React.FC = () => {
             <Modal isOpen={isDeployModalOpen} onClose={() => setIsDeployModalOpen(false)} title="Сайт готов к развертыванию!">
                 <div className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: deploymentInstructions.replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1.5 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:underline">$1</a>').replace(/\n/g, '<br />') }} />
             </Modal>
-             <Modal isOpen={isAnalysisReportModalOpen} onClose={() => setIsAnalysisReportModalOpen(false)} title={`Отчет AI-Анализа для: ${selectedFileData?.newFileName || ''}`}>
-                {isLoading.analyzingFileId && !analysisReportContent ? (
-                    <div className="flex items-center justify-center h-full">
-                        <Spinner className="w-12 h-12 text-purple-400" />
-                        <span className="ml-4 text-lg">Анализирую страницу...</span>
-                    </div>
-                ) : (
-                    <>
-                        <div 
-                            className="space-y-4 text-gray-300 prose prose-invert prose-sm max-w-none flex-grow overflow-y-auto pr-4" 
-                            dangerouslySetInnerHTML={{ __html: analysisReportContent.replace(/```html([\s\S]*?)```/g, '<pre class="bg-gray-900 rounded-md p-3"><code class="language-html">$1</code></pre>').replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>').replace(/\n/g, '<br />') }} 
-                        />
-                        <div className="flex justify-end gap-3 pt-4 border-t border-gray-700 flex-shrink-0">
-                            <button
-                                onClick={() => setIsAnalysisReportModalOpen(false)}
-                                className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-md transition-colors"
-                            >
-                                Закрыть
-                            </button>
-                            <button
-                                onClick={handleApplyFixes}
-                                disabled={isLoading.applyingFixes}
-                                className="bg-green-600 hover:bg-green-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-green-800 disabled:cursor-not-allowed flex items-center gap-2"
-                            >
-                                {isLoading.applyingFixes ? <Spinner className="w-5 h-5"/> : null}
-                                Применить изменения
-                            </button>
-                        </div>
-                    </>
-                )}
-            </Modal>
+            
             {isFullscreenPreview && (
                 <Modal isOpen={!!isFullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Предпросмотр: ${isFullscreenPreview.file.name}`} size="large">
                     <iframe key={isFullscreenPreview.file.id} src={isFullscreenPreview.url} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />

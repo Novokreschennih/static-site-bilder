@@ -1,6 +1,6 @@
 import React from 'react';
 import { HtmlFile } from '../types';
-import { StarIcon, ExpandIcon, TrashIcon, Spinner, CheckCircleIcon, AnalyticsIcon } from './icons';
+import { StarIcon, ExpandIcon, TrashIcon, Spinner, CheckCircleIcon, AnalyticsIcon, SettingsIcon } from './icons';
 
 interface HtmlFileCardProps {
   file: HtmlFile;
@@ -73,22 +73,27 @@ export const HtmlFileCard: React.FC<HtmlFileCardProps> = ({
           <button onClick={() => onSetMain(file.id)} className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md transition-colors ${file.isMain ? 'text-yellow-300 bg-yellow-900/50' : 'text-gray-300 hover:bg-gray-700'}`}>
             <StarIcon className="w-4 h-4" /> {file.isMain ? 'Главная' : 'Сделать главной'}
           </button>
-          <button onClick={() => onSelect(file.id)} className="text-sm text-cyan-400 hover:underline">
-            Настроить
-          </button>
-        </div>
-        <div className={`mt-3 pt-3 border-t border-gray-700 flex items-center gap-2 text-xs ${isConfigured ? 'text-green-400' : 'text-gray-400'}`}>
+          <div className={`flex items-center gap-2 text-xs ${isConfigured ? 'text-green-400' : 'text-gray-400'}`}>
             <CheckCircleIcon className="w-4 h-4" />
-            <span>Настроено: {completionText}</span>
+            <span>{completionText}</span>
+          </div>
         </div>
-        <div className="mt-3">
+        
+        <div className="mt-4 pt-4 border-t border-gray-700 grid grid-cols-2 gap-3">
+             <button 
+                onClick={() => onSelect(file.id)}
+                className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-3 rounded-md transition-colors text-sm"
+             >
+                <SettingsIcon className="w-5 h-5"/>
+                <span>Настроить</span>
+            </button>
              <button 
                 onClick={() => onAnalyze(file.id)} 
                 disabled={isAnalyzing}
                 className="w-full flex justify-center items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-semibold py-2 px-3 rounded-md transition-colors disabled:bg-purple-800 disabled:cursor-not-allowed text-sm"
              >
                 {isAnalyzing ? <Spinner className="w-5 h-5"/> : <AnalyticsIcon className="w-5 h-5"/>} 
-                <span>{isAnalyzing ? 'Анализ...' : 'Провести AI-Анализ'}</span>
+                <span>{isAnalyzing ? 'Анализ...' : 'AI-Анализ'}</span>
             </button>
         </div>
       </div>

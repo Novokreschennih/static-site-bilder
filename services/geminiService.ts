@@ -80,12 +80,17 @@ ${truncatedContent}
 `;
 
     try {
-        const response = await ai.models.generateContent({
+        const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro', // Using a more powerful model for analysis
             contents: prompt,
         });
 
-        return response.text.trim();
+        let fullReport = "";
+        for await (const chunk of responseStream) {
+            fullReport += chunk.text;
+        }
+
+        return fullReport.trim();
 
     } catch (error) {
         console.error("Error analyzing content with Gemini API:", error);
@@ -120,13 +125,18 @@ ${htmlContent}
 `;
 
     try {
-        const response = await ai.models.generateContent({
+        const responseStream = await ai.models.generateContentStream({
             model: 'gemini-2.5-pro', // Using pro model for better code manipulation
             contents: prompt,
         });
+        
+        let fullHtml = "";
+        for await (const chunk of responseStream) {
+            fullHtml += chunk.text;
+        }
 
         // Clean the response to ensure it's just HTML
-        let cleanedHtml = response.text.trim();
+        let cleanedHtml = fullHtml.trim();
         if (cleanedHtml.startsWith('```html')) {
             cleanedHtml = cleanedHtml.substring(7);
         }
