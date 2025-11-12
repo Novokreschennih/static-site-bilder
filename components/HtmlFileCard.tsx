@@ -1,6 +1,6 @@
 import React from 'react';
 import { HtmlFile } from '../types';
-import { StarIcon, ExpandIcon, TrashIcon, Spinner, CheckCircleIcon, AnalyticsIcon, SettingsIcon } from './icons';
+import { StarIcon, ExpandIcon, TrashIcon, Spinner, CheckCircleIcon, AnalyticsIcon, SettingsIcon, ExclamationCircleIcon } from './icons';
 
 interface HtmlFileCardProps {
   file: HtmlFile;
@@ -28,13 +28,14 @@ export const HtmlFileCard: React.FC<HtmlFileCardProps> = ({
   isAnalyzing,
 }) => {
   const totalPlaceholders = file.placeholders.length + Object.keys(file.linkPlaceholders).length;
-  // FIX: Added `typeof v === 'string'` check to fix TypeScript error where `.trim()` was called on an `unknown` type.
   const filledPlaceholders =
     Object.values(file.placeholderValues).filter(v => typeof v === 'string' && v.trim() !== '').length +
     Object.values(file.linkPlaceholders).filter(v => typeof v === 'string' && v.trim() !== '').length;
 
-  const isConfigured = totalPlaceholders > 0 && filledPlaceholders === totalPlaceholders;
-  const completionText = totalPlaceholders > 0 ? `${filledPlaceholders}/${totalPlaceholders}` : 'Нет плейсхолдеров';
+  const hasPlaceholders = totalPlaceholders > 0;
+  const allPlaceholdersFilled = hasPlaceholders && filledPlaceholders === totalPlaceholders;
+  const needsConfiguration = hasPlaceholders && !allPlaceholdersFilled;
+
 
   return (
     <div className={`bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300 ${isSelected ? 'ring-2 ring-cyan-500' : 'ring-1 ring-gray-700'}`}>
@@ -76,10 +77,22 @@ export const HtmlFileCard: React.FC<HtmlFileCardProps> = ({
           <button onClick={() => onSetMain(file.id)} className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md transition-colors ${file.isMain ? 'text-yellow-300 bg-yellow-900/50' : 'text-gray-300 hover:bg-gray-700'}`}>
             <StarIcon className="w-4 h-4" /> {file.isMain ? 'Главная' : 'Сделать главной'}
           </button>
-          <div className={`flex items-center gap-2 text-xs ${isConfigured ? 'text-green-400' : 'text-gray-400'}`}>
-            <CheckCircleIcon className="w-4 h-4" />
-            <span>{completionText}</span>
-          </div>
+           {needsConfiguration ? (
+                <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-medium">
+                    <ExclamationCircleIcon className="w-4 h-4" />
+                    <span>Настройка: {`${filledPlaceholders}/${totalPlaceholders}`}</span>
+                </div>
+            ) : allPlaceholdersFilled ? (
+                <div className="flex items-center gap-1.5 text-xs text-green-400">
+                    <CheckCircleIcon className="w-4 h-4" />
+                    <span>Настроено: {`${filledPlaceholders}/${totalPlaceholders}`}</span>
+                </div>
+            ) : (
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                    <CheckCircleIcon className="w-4 h-4" />
+                    <span>Нет плейсхолдеров</span>
+                </div>
+            )}
         </div>
         
         <div className="mt-4 pt-4 border-t border-gray-700 grid grid-cols-2 gap-3">
