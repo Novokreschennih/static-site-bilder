@@ -98,39 +98,43 @@ export function getDeploymentInstructions(): string {
 export function parseMarkdown(markdownText: string): string {
     if (!markdownText) return '';
 
-    const escapeHtml = (unsafe: string) => 
+    const escapeHtml = (unsafe: string) =>
         unsafe
          .replace(/&/g, "&amp;")
          .replace(/</g, "&lt;")
          .replace(/>/g, "&gt;")
          .replace(/"/g, "&quot;")
          .replace(/'/g, "&#039;");
-
-    let html = markdownText
-        // Code blocks
-        .replace(/```html\s*([\s\S]*?)```/gs, (match, code) => 
-            `<pre class="bg-gray-900 rounded-md p-3 my-2 overflow-x-auto"><code class="language-html text-sm">${escapeHtml(code)}</code></pre>`
-        )
-        // Headers
-        .replace(/^### (.*$)/gm, '<h3 class="text-lg font-semibold text-white mt-4 mb-2">$1</h3>')
-        // List items
-        .replace(/^- (.*$)/gm, '<li>$1</li>')
-        // Inline elements
+    
+    const applyInlineFormatting = (text: string) => text
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>');
 
-    // Wrap consecutive list items in <ul>
-    html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>').replace(/<\/ul>\s*<ul>/g, '');
+    // Process blocks separated by double newlines
+    const blocks = markdownText.split('\n\n');
+    const htmlBlocks = blocks.map(block => {
+        const trimmedBlock = block.trim();
+        if (!trimmedBlock) return '';
 
-    // Paragraphs
-    html = html.split('\n').map(line => {
-        const trimmed = line.trim();
-        if (trimmed === '') return '';
-        if (trimmed.startsWith('<h3') || trimmed.startsWith('<ul') || trimmed.startsWith('<li') || trimmed.startsWith('<pre')) {
-            return line;
+        // Code blocks
+        if (trimmedBlock.startsWith('```html')) {
+            const code = trimmedBlock.replace(/```html\s*([\s\S]*?)```/gs, '$1');
+            return `<pre class="bg-gray-900 rounded-md p-3 my-2 overflow-x-auto"><code class="language-html text-sm">${escapeHtml(code)}</code></pre>`;
         }
-        return `<p>${line}</p>`;
-    }).join('\n');
 
-    return html.replace(/\n/g, ''); // Clean up remaining newlines
+        // Headers
+        if (trimmedBlock.startsWith('#### ')) return `<h4 class="text-md font-semibold text-gray-100 mt-3 mb-1">${applyInlineFormatting(trimmedBlock.substring(5))}</h4>`;
+        if (trimmedBlock.startsWith('### ')) return `<h3 class="text-lg font-semibold text-white mt-4 mb-2">${applyInlineFormatting(trimmedBlock.substring(4))}</h3>`;
+        
+        // Lists
+        if (trimmedBlock.match(/^[\*\-] /)) {
+            const items = trimmedBlock.split('\n').map(item => `<li>${applyInlineFormatting(item.replace(/^[\*\-] /, ''))}</li>`).join('');
+            return `<ul class="list-disc list-inside space-y-1">${items}</ul>`;
+        }
+
+        // Paragraphs
+        return `<p>${applyInlineFormatting(trimmedBlock.replace(/\n/g, ' '))}</p>`;
+    });
+
+    return htmlBlocks.join('');
 }

@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { SiteFile, HtmlFile } from './types';
 import { analyzeHtmlContent, optimizeFileName, applyAnalysisFixes } from './services/geminiService';
@@ -9,6 +10,7 @@ import saveAs from 'file-saver';
 import { HelpContent } from './components/HelpContent';
 import { LegalContent } from './components/LegalContent';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import useProjectState from './hooks/useProjectState';
 import { AUTH_STORAGE_KEY, APP_ID } from './constants';
 import { LandingPage } from './components/LandingPage';
 import PinValidation from './components/PinValidation';
@@ -19,8 +21,8 @@ const App: React.FC = () => {
     const [isAuthenticated, setIsAuthenticated] = useLocalStorage<boolean>(AUTH_STORAGE_KEY, false);
     const [view, setView] = useState<'landing' | 'pin' | 'app'>('landing');
     
-    const [files, setFiles] = useState<SiteFile[]>([]);
-    const [htmlFiles, setHtmlFiles] = useState<HtmlFile[]>([]);
+    const [{ files, htmlFiles, globalScripts }, updateProjectState, clearProjectState] = useProjectState();
+    
     const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
     const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -31,15 +33,14 @@ const App: React.FC = () => {
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
     const [isFullscreenPreview, setFullscreenPreview] = useState<{file: HtmlFile, viewMode: 'preview' | 'code'} | null>(null);
-    const [globalScripts, setGlobalScripts] = useState<string>('');
+    const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
     
     const [apiKey, setApiKey] = useLocalStorage<string>('gemini-api-key', '');
     const [tempApiKey, setTempApiKey] = useState(apiKey);
 
-    // State for the sidebar view
     const [sidebarView, setSidebarView] = useState<'settings' | 'analysis'>('settings');
     const [currentAnalysisReport, setCurrentAnalysisReport] = useState<string | null>(null);
-
+    const [isGlobalSettingsExpanded, setIsGlobalSettingsExpanded] = useState(false);
 
     useEffect(() => {
         setTempApiKey(apiKey);
@@ -56,17 +57,14 @@ const App: React.FC = () => {
     const deploymentInstructions = useMemo(() => getDeploymentInstructions(), []);
 
     const resetState = useCallback(() => {
-        files.forEach(file => file.objectUrl && URL.revokeObjectURL(file.objectUrl));
         Object.values(previewUrls).forEach(URL.revokeObjectURL);
-        setFiles([]);
-        setHtmlFiles([]);
+        clearProjectState();
         setPreviewUrls({});
         setSelectedFileId(null);
         setNotification(null);
-        setGlobalScripts('');
         setSidebarView('settings');
         setCurrentAnalysisReport(null);
-    }, [files, previewUrls]);
+    }, [previewUrls, clearProjectState]);
 
     const handleEnterApp = () => {
         setView(isAuthenticated ? 'app' : 'pin');
@@ -80,6 +78,7 @@ const App: React.FC = () => {
         setSelectedFileId(id);
         setSidebarView('settings');
         setCurrentAnalysisReport(null);
+        setIsGlobalSettingsExpanded(false);
     };
 
     const handleLogout = useCallback(() => {
@@ -102,24 +101,22 @@ const App: React.FC = () => {
             }
         }
 
-        const existingFileIds = new Set(files.map(f => `${(f as any).webkitRelativePath || f.name}-${f.lastModified}`));
+        const existingFileIds = new Set(files.map(f => f.id));
 
         const filePromises: Promise<SiteFile | null>[] = uploadedFileArray
-            .filter(file => !existingFileIds.has(`${(file as any).webkitRelativePath || file.name}-${file.lastModified}`))
             .map(file => {
                 return new Promise((resolve) => {
-                    const reader = new FileReader();
                     const originalPath = (file as any).webkitRelativePath || file.name;
-                    const path = originalPath.startsWith(commonBasePath)
-                        ? originalPath.substring(commonBasePath.length)
-                        : originalPath;
+                     const path = originalPath.startsWith(commonBasePath) ? originalPath.substring(commonBasePath.length) : originalPath;
+                    const fileId = `${path}-${file.lastModified}`;
+                    
+                    if (!path || existingFileIds.has(fileId)) { resolve(null); return; }
 
-                    if (!path) { resolve(null); return; }
-
+                    const reader = new FileReader();
                     reader.onload = (e) => {
                         const content = e.target?.result;
                         if (content) {
-                            const newFile: SiteFile = { id: `${path}-${file.lastModified}`, path, name: file.name, content, type: file.type };
+                            const newFile: SiteFile = { id: fileId, path, name: file.name, content, type: file.type };
                             resolve(newFile);
                         } else { resolve(null); }
                     };
@@ -138,18 +135,14 @@ const App: React.FC = () => {
             setNotification({ message: "Все выбранные файлы уже добавлены.", type: 'info'});
             return;
         };
-
-        const newFileMap = new Map<string, SiteFile>();
-        newFiles.forEach(f => {
+        
+        const newFilesWithUrls = newFiles.map(f => {
              const objectUrl = URL.createObjectURL(new Blob([f.content], { type: f.type }));
-             const fileWithUrl = {...f, objectUrl};
-             newFileMap.set(f.path, fileWithUrl);
+             return {...f, objectUrl};
         });
         
         const newHtmlFiles: HtmlFile[] = [];
-        let totalPlaceholders = 0;
-
-        for (const file of newFiles) {
+        for (const file of newFilesWithUrls) {
             if (file.type === 'text/html') {
                 const content = file.content as string;
                 const placeholderRegex = /(?:\[\[|{{)\s*(.*?)\s*(?:\]\]|}})/g;
@@ -157,36 +150,45 @@ const App: React.FC = () => {
                 const allPlaceholders = [...new Set(allMatches)];
                 const textPlaceholders = allPlaceholders.filter(p => !/^(link|url)_/i.test(p));
                 const linkPlaceholderKeys = allPlaceholders.filter(p => /^(link|url)_/i.test(p));
-                totalPlaceholders += allPlaceholders.length;
                 const placeholderValues = textPlaceholders.reduce((acc, p) => ({ ...acc, [p]: '' }), {});
                 const linkPlaceholders = linkPlaceholderKeys.reduce((acc, p) => ({ ...acc, [p]: '' }), {});
                 newHtmlFiles.push({ ...file, content, isMain: false, newFileName: file.name, placeholders: textPlaceholders, placeholderValues, linkPlaceholders });
             }
         }
         
-        setFiles(prev => [...prev, ...Array.from(newFileMap.values())]);
-        setHtmlFiles(prev => [...prev, ...newHtmlFiles]);
+        updateProjectState({
+            files: [...files, ...newFilesWithUrls],
+            htmlFiles: [...htmlFiles, ...newHtmlFiles],
+        });
         setNotification({ message: `Добавлено ${newFiles.length} новых файлов.`, type: 'success' });
-    }, [files]);
+    }, [files, htmlFiles, updateProjectState]);
     
     useEffect(() => {
         const generateAllPreviews = async () => {
-            Object.values(previewUrls).forEach(URL.revokeObjectURL);
-            // FIX: Explicitly typing `assetFileMap` to resolve a TypeScript error where it was inferred as `Map<unknown, unknown>`.
+            const currentUrls = { ...previewUrls };
             const assetFileMap: Map<string, SiteFile> = new Map(files.map(f => [f.path, f]));
             const newPreviewUrls: Record<string, string> = {};
+
             for (const hf of htmlFiles) {
+                // To avoid re-generating existing URLs if content hasn't changed, a more complex check would be needed.
+                // For simplicity, we regenerate all, revoking old ones first.
+                if (currentUrls[hf.id]) URL.revokeObjectURL(currentUrls[hf.id]);
                 const substitutedContent = substituteAllPlaceholders(hf, htmlFiles);
                 const url = await createPreviewUrl(substitutedContent, hf.path, assetFileMap);
                 newPreviewUrls[hf.id] = url;
             }
             setPreviewUrls(newPreviewUrls);
         };
-        if (htmlFiles.length > 0) { generateAllPreviews(); }
-        return () => { if (htmlFiles.length > 0) { Object.values(previewUrls).forEach(URL.revokeObjectURL); }};
-    // FIX: Added `files` to the dependency array to ensure previews are regenerated when any file changes, preventing stale data.
-    }, [files, htmlFiles]);
 
+        if (htmlFiles.length > 0 || files.length > 0) {
+            generateAllPreviews();
+        }
+
+        return () => {
+            Object.values(previewUrls).forEach(URL.revokeObjectURL);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [files, htmlFiles]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) processFiles(Array.from(e.target.files));
@@ -202,15 +204,14 @@ const App: React.FC = () => {
     };
     
     const setMainPage = (id: string) => {
-        setHtmlFiles(prev => {
-            const oldMain = prev.find(f => f.isMain);
-            return prev.map(file => {
-                let newFileName = file.newFileName;
-                if (file.id === id) { newFileName = 'index.html'; } 
-                else if (oldMain && file.id === oldMain.id) { newFileName = file.newFileName === 'index.html' ? file.name : file.newFileName; }
-                return { ...file, isMain: file.id === id, newFileName: newFileName };
-            });
+        const oldMain = htmlFiles.find(f => f.isMain);
+        const newHtmlFiles = htmlFiles.map(file => {
+            let newFileName = file.newFileName;
+            if (file.id === id) { newFileName = 'index.html'; } 
+            else if (oldMain && file.id === oldMain.id) { newFileName = file.newFileName === 'index.html' ? file.name : file.newFileName; }
+            return { ...file, isMain: file.id === id, newFileName: newFileName };
         });
+        updateProjectState({ htmlFiles: newHtmlFiles });
         setSelectedFileId(id);
     };
 
@@ -221,7 +222,7 @@ const App: React.FC = () => {
         if (fileToDelete.objectUrl) URL.revokeObjectURL(fileToDelete.objectUrl);
         if (previewUrls[fileIdToDelete]) URL.revokeObjectURL(previewUrls[fileIdToDelete]);
 
-        setHtmlFiles(prevHtmlFiles => prevHtmlFiles
+        const newHtmlFiles = htmlFiles
             .map(hf => {
                 const newLinkPlaceholders = { ...hf.linkPlaceholders };
                 let changed = false;
@@ -233,15 +234,18 @@ const App: React.FC = () => {
                 }
                 return changed ? { ...hf, linkPlaceholders: newLinkPlaceholders } : hf;
             })
-            .filter(hf => hf.id !== fileIdToDelete)
-        );
+            .filter(hf => hf.id !== fileIdToDelete);
 
-        setFiles(prev => prev.filter(f => f.id !== fileIdToDelete));
+        updateProjectState({
+            files: files.filter(f => f.id !== fileIdToDelete),
+            htmlFiles: newHtmlFiles
+        });
+        
         setPreviewUrls(prev => { const newUrls = { ...prev }; delete newUrls[fileIdToDelete]; return newUrls; });
         if (selectedFileId === fileIdToDelete) { setSelectedFileId(null); }
         
         setNotification({ message: `Файл "${fileToDelete.name}" удален.`, type: 'info' });
-    }, [files, previewUrls, selectedFileId]);
+    }, [files, htmlFiles, previewUrls, selectedFileId, updateProjectState]);
 
 
     const handleOptimizeNames = async () => {
@@ -259,7 +263,7 @@ const App: React.FC = () => {
                 return { ...file, newFileName: `${newName}.html` };
             });
             const optimizedFiles = await Promise.all(promises);
-            setHtmlFiles(optimizedFiles);
+            updateProjectState({ htmlFiles: optimizedFiles });
             setNotification({ message: 'Имена файлов успешно оптимизированы!', type: 'success' });
         } catch (error) {
             console.error("Error during filename optimization:", error);
@@ -325,12 +329,11 @@ const App: React.FC = () => {
             const newHtmlFiles = htmlFiles.map(f =>
                 f.id === selectedFileId ? { ...f, content: fixedHtml } : f
             );
-            setHtmlFiles(newHtmlFiles);
-
             const newFiles = files.map(f =>
                 f.id === selectedFileId ? { ...f, content: fixedHtml } : f
             );
-            setFiles(newFiles);
+            
+            updateProjectState({ files: newFiles, htmlFiles: newHtmlFiles });
 
             if (isFullscreenPreview && isFullscreenPreview.file.id === selectedFileId) {
                 const updatedFile = newHtmlFiles.find(f => f.id === selectedFileId);
@@ -339,11 +342,8 @@ const App: React.FC = () => {
                 }
             }
             
-            setNotification({ message: `Изменения для "${fileToFix.newFileName}" успешно применены!`, type: 'success' });
-            // Let user review the applied fixes in the analysis tab if they wish
-            // setSidebarView('settings');
-            // setCurrentAnalysisReport(null);
-            handleAnalyzeContent(selectedFileId); // Re-analyze to show the new state
+            setCurrentAnalysisReport(null);
+            setNotification({ message: `Изменения успешно применены! Проведите аудит заново, чтобы увидеть обновленный отчет.`, type: 'success' });
         } catch (error) {
             console.error("Error applying fixes:", error);
             let errorMessage = "Произошла неизвестная ошибка при применении исправлений.";
@@ -391,10 +391,12 @@ const App: React.FC = () => {
     };
     
     const handlePlaceholderChange = (fileId: string, placeholder: string, value: string) => {
-        setHtmlFiles(prev => prev.map(f => f.id === fileId ? { ...f, placeholderValues: { ...f.placeholderValues, [placeholder]: value } } : f));
+        const newHtmlFiles = htmlFiles.map(f => f.id === fileId ? { ...f, placeholderValues: { ...f.placeholderValues, [placeholder]: value } } : f)
+        updateProjectState({ htmlFiles: newHtmlFiles });
     };
     const handleLinkPlaceholderChange = (fileId: string, placeholder: string, targetFileId: string) => {
-        setHtmlFiles(prev => prev.map(f => f.id === fileId ? { ...f, linkPlaceholders: { ...f.linkPlaceholders, [placeholder]: targetFileId } } : f));
+        const newHtmlFiles = htmlFiles.map(f => f.id === fileId ? { ...f, linkPlaceholders: { ...f.linkPlaceholders, [placeholder]: targetFileId } } : f);
+        updateProjectState({ htmlFiles: newHtmlFiles });
     };
     const handleSaveApiKey = () => {
         setApiKey(tempApiKey);
@@ -403,7 +405,8 @@ const App: React.FC = () => {
     };
 
     const handleUpdateFileName = (fileId: string, newName: string) => {
-        setHtmlFiles(prev => prev.map(f => f.id === fileId ? {...f, newFileName: newName} : f))
+        const newHtmlFiles = htmlFiles.map(f => f.id === fileId ? {...f, newFileName: newName} : f);
+        updateProjectState({ htmlFiles: newHtmlFiles });
     };
 
     const handleUpdateFileContent = useCallback((fileId: string, newContent: string) => {
@@ -416,15 +419,13 @@ const App: React.FC = () => {
             }
             return hf;
         });
-        setHtmlFiles(newHtmlFiles);
-
         const newFiles = files.map(f => (f.id === fileId ? { ...f, content: newContent } : f));
-        setFiles(newFiles);
+        updateProjectState({ files: newFiles, htmlFiles: newHtmlFiles });
         
         if (isFullscreenPreview && isFullscreenPreview.file.id === fileId && updatedFile) {
             setFullscreenPreview(prev => prev ? { ...prev, file: updatedFile } : null);
         }
-    }, [htmlFiles, files, isFullscreenPreview]);
+    }, [files, htmlFiles, isFullscreenPreview, updateProjectState]);
 
     const selectedFileData = useMemo(() => htmlFiles.find(f => f.id === selectedFileId), [htmlFiles, selectedFileId]);
     const hasMainPage = useMemo(() => htmlFiles.some(f => f.isMain), [htmlFiles]);
@@ -458,7 +459,7 @@ const App: React.FC = () => {
                         <div className="py-6 border-b border-gray-700">
                             <h2 className="text-xl font-semibold mb-4 text-white">Глобальные скрипты</h2>
                             <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
-                            <textarea rows={5} value={globalScripts} onChange={(e) => setGlobalScripts(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
+                            <textarea rows={5} value={globalScripts} onChange={(e) => updateProjectState({ globalScripts: e.target.value })} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
                         </div>
                         <div className="mt-6 space-y-3">
                             <h2 className="text-xl font-semibold mb-4 text-white">Упаковка</h2>
@@ -535,10 +536,44 @@ const App: React.FC = () => {
                                 </form>
                             ) : <p className="text-gray-400">На этой странице нет плейсхолдеров.</p>}
                         </div>
-                        <div className="pt-6">
-                           <button onClick={() => setSelectedFileId(null)} className="w-full text-center text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
-                                Показать глобальные настройки
-                           </button>
+                        <div className="mt-6 pt-6 border-t border-gray-700">
+                             <h3
+                                onClick={() => setIsGlobalSettingsExpanded(!isGlobalSettingsExpanded)}
+                                className="text-xl font-semibold text-white mb-4 flex justify-between items-center cursor-pointer group"
+                            >
+                                <span className="group-hover:text-cyan-400 transition-colors">Глобальные настройки</span>
+                                <svg className={`w-5 h-5 transition-transform text-gray-400 group-hover:text-cyan-400 ${isGlobalSettingsExpanded ? 'rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </h3>
+                            {isGlobalSettingsExpanded && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-300 mb-3">Инструменты ИИ</h4>
+                                        <div className="space-y-3">
+                                            <button onClick={handleOptimizeNames} disabled={isLoading.optimizing} className="w-full flex justify-center items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed">
+                                                {isLoading.optimizing ? <Spinner className="w-5 h-5"/> : <MagicIcon className="w-5 h-5"/>} <span>Оптимизировать все имена</span>
+                                            </button>
+                                            <p className="text-sm text-gray-400">Переименовать все страницы (кроме главной) для лучшего SEO.</p>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-300 mb-3">Глобальные скрипты</h4>
+                                        <p className="text-sm text-gray-400 mb-3">Код отсюда (например, Яндекс.Метрика) будет добавлен перед `&lt;/head&gt;` на всех страницах.</p>
+                                        <textarea rows={5} value={globalScripts} onChange={(e) => updateProjectState({ globalScripts: e.target.value })} className="w-full bg-gray-700 text-white p-2 rounded-md text-sm border border-gray-600 focus:ring-cyan-500 focus:border-cyan-500 font-mono" placeholder="<!-- Yandex.Metrika counter -->..." />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-300 mb-3">Упаковка</h4>
+                                        <button onClick={handlePackageZip} disabled={!hasMainPage || isLoading.zipping} className="w-full flex justify-center items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-md transition-colors disabled:bg-cyan-800 disabled:cursor-not-allowed">
+                                            {isLoading.zipping ? <Spinner className="w-5 h-5"/> : <ZipIcon className="w-5 h-5"/>} <span>Упаковать ZIP-архив</span>
+                                        </button>
+                                        <p className="text-sm text-gray-400">Создать готовый для загрузки ZIP-архив. <span className={!hasMainPage ? 'text-yellow-400' : ''}>{!hasMainPage ? 'Сначала выберите главную страницу.' : ''}</span></p>
+                                    </div>
+                                    <div className="mt-auto pt-6 border-t border-gray-700">
+                                        <button onClick={resetState} className="w-full text-center text-sm text-gray-400 hover:text-red-400 transition-colors"> Начать заново </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -698,23 +733,38 @@ const App: React.FC = () => {
             {isFullscreenPreview && (
                 <Modal isOpen={!!isFullscreenPreview} onClose={() => setFullscreenPreview(null)} title={`Редактор: ${isFullscreenPreview.file.newFileName}`} size="large">
                     <div className="flex flex-col h-full">
-                        <div className="flex-shrink-0 mb-4 flex items-center gap-2 p-1 bg-gray-900 rounded-lg self-start">
-                            <button
-                                onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'preview' } : null)}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'preview' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
-                            >
-                                <EyeIcon className="w-5 h-5" /> Превью
-                            </button>
-                            <button
-                                onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'code' } : null)}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'code' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
-                            >
-                                <CodeBracketIcon className="w-5 h-5" /> Код
-                            </button>
+                         <div className="flex-shrink-0 mb-4 flex items-center justify-between p-1 bg-gray-900 rounded-lg">
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'preview' } : null)}
+                                    className={`flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'preview' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
+                                >
+                                    <EyeIcon className="w-5 h-5" /> Превью
+                                </button>
+                                <button
+                                    onClick={() => setFullscreenPreview(prev => prev ? { ...prev, viewMode: 'code' } : null)}
+                                    className={`flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors ${isFullscreenPreview.viewMode === 'code' ? 'bg-cyan-600 text-white' : 'bg-transparent text-gray-300 hover:bg-gray-700'}`}
+                                >
+                                    <CodeBracketIcon className="w-5 h-5" /> Код
+                                </button>
+                            </div>
+
+                            {isFullscreenPreview.viewMode === 'preview' && (
+                                <div className="flex items-center gap-1">
+                                    <button onClick={() => setPreviewDevice('desktop')} className={`p-2 text-sm rounded-md transition-colors ${previewDevice === 'desktop' ? 'bg-gray-700 text-white' : 'bg-transparent text-gray-400 hover:bg-gray-700/50 hover:text-white'}`} aria-label="Desktop preview">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                                    </button>
+                                    <button onClick={() => setPreviewDevice('mobile')} className={`p-2 text-sm rounded-md transition-colors ${previewDevice === 'mobile' ? 'bg-gray-700 text-white' : 'bg-transparent text-gray-400 hover:bg-gray-700/50 hover:text-white'}`} aria-label="Mobile preview">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                                    </button>
+                                </div>
+                            )}
                         </div>
-                        <div className="flex-grow relative bg-gray-900 rounded-lg">
+                        <div className="flex-grow relative bg-gray-900 rounded-lg flex items-center justify-center">
                             {isFullscreenPreview.viewMode === 'preview' ? (
-                                <iframe key={isFullscreenPreview.file.id} src={previewUrls[isFullscreenPreview.file.id]} className="w-full h-full border-0 rounded-md bg-white" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />
+                                <div className={`bg-white rounded-md shadow-2xl transition-all duration-300 ${previewDevice === 'desktop' ? 'w-full h-full' : 'w-[375px] h-[667px] max-w-full max-h-full'}`}>
+                                    <iframe key={`${isFullscreenPreview.file.id}-${previewUrls[isFullscreenPreview.file.id]}`} src={previewUrls[isFullscreenPreview.file.id]} className="w-full h-full border-0 rounded-md" sandbox="allow-scripts" title={`Fullscreen Preview of ${isFullscreenPreview.file.name}`} />
+                                </div>
                             ) : (
                                 <textarea
                                     value={isFullscreenPreview.file.content}

@@ -1,5 +1,4 @@
-
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 function getValueFromStorage<T>(key: string, initialValue: T): T {
   if (typeof window === 'undefined') {
@@ -30,12 +29,6 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T 
       console.error(error);
     }
   };
-  
-  useEffect(() => {
-    setStoredValue(getValueFromStorage(key, initialValue));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
 
   return [storedValue, setValue];
 }
