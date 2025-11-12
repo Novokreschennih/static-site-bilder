@@ -95,46 +95,78 @@ export function getDeploymentInstructions(): string {
 6.  Ваш сайт будет развернут через минуту!
 `;
 }
+
 export function parseMarkdown(markdownText: string): string {
     if (!markdownText) return '';
 
-    const escapeHtml = (unsafe: string) =>
-        unsafe
-         .replace(/&/g, "&amp;")
-         .replace(/</g, "&lt;")
-         .replace(/>/g, "&gt;")
-         .replace(/"/g, "&quot;")
-         .replace(/'/g, "&#039;");
-    
-    const applyInlineFormatting = (text: string) => text
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1 py-0.5 font-mono text-cyan-300">$1</code>');
+    const applyInlineFormatting = (text: string) => {
+         // Escape HTML tags to prevent rendering them as actual elements
+        const escapedText = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+            
+        // Apply markdown formatting
+        return escapedText
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`([^`]+)`/g, '<code class="bg-gray-700 text-sm rounded-md px-1.5 py-0.5 font-mono text-cyan-300">$1</code>');
+    };
 
-    // Process blocks separated by double newlines
-    const blocks = markdownText.split('\n\n');
-    const htmlBlocks = blocks.map(block => {
-        const trimmedBlock = block.trim();
-        if (!trimmedBlock) return '';
+    const lines = markdownText.split('\n');
+    let html = '';
+    let inList = false;
+    let inCodeBlock = false;
+    let codeLang = '';
+    let codeContent = '';
 
+    for (const line of lines) {
         // Code blocks
-        if (trimmedBlock.startsWith('```html')) {
-            const code = trimmedBlock.replace(/```html\s*([\s\S]*?)```/gs, '$1');
-            return `<pre class="bg-gray-900 rounded-md p-3 my-2 overflow-x-auto"><code class="language-html text-sm">${escapeHtml(code)}</code></pre>`;
+        if (line.trim().startsWith('```')) {
+            if (inCodeBlock) {
+                html += `<pre class="bg-gray-900 rounded-md p-3 my-2 overflow-x-auto"><code class="language-${codeLang} text-sm">${escapeRegExp(codeContent).trim()}</code></pre>\n`;
+                inCodeBlock = false;
+                codeContent = '';
+            } else {
+                if (inList) { html += '</ul>\n'; inList = false; }
+                inCodeBlock = true;
+                codeLang = line.trim().substring(3);
+            }
+            continue;
         }
 
-        // Headers
-        if (trimmedBlock.startsWith('#### ')) return `<h4 class="text-md font-semibold text-gray-100 mt-3 mb-1">${applyInlineFormatting(trimmedBlock.substring(5))}</h4>`;
-        if (trimmedBlock.startsWith('### ')) return `<h3 class="text-lg font-semibold text-white mt-4 mb-2">${applyInlineFormatting(trimmedBlock.substring(4))}</h3>`;
-        
-        // Lists
-        if (trimmedBlock.match(/^[\*\-] /)) {
-            const items = trimmedBlock.split('\n').map(item => `<li>${applyInlineFormatting(item.replace(/^[\*\-] /, ''))}</li>`).join('');
-            return `<ul class="list-disc list-inside space-y-1">${items}</ul>`;
+        if (inCodeBlock) {
+            codeContent += line + '\n';
+            continue;
         }
 
-        // Paragraphs
-        return `<p>${applyInlineFormatting(trimmedBlock.replace(/\n/g, ' '))}</p>`;
-    });
+        const trimmedLine = line.trim();
 
-    return htmlBlocks.join('');
+        if (trimmedLine.startsWith('#### ')) {
+            if (inList) { html += '</ul>\n'; inList = false; }
+            html += `<h4 class="text-md font-semibold text-gray-100 mt-3 mb-1">${applyInlineFormatting(trimmedLine.substring(5))}</h4>\n`;
+        } else if (trimmedLine.startsWith('### ')) {
+            if (inList) { html += '</ul>\n'; inList = false; }
+            html += `<h3 class="text-lg font-semibold text-white mt-4 mb-2">${applyInlineFormatting(trimmedLine.substring(4))}</h3>\n`;
+        } else if (trimmedLine.startsWith('* ') || trimmedLine.startsWith('- ')) {
+            if (!inList) {
+                html += '<ul class="list-disc list-inside space-y-1">\n';
+                inList = true;
+            }
+            html += `  <li>${applyInlineFormatting(trimmedLine.substring(2))}</li>\n`;
+        } else {
+            if (inList) {
+                html += '</ul>\n';
+                inList = false;
+            }
+            if (trimmedLine) {
+                html += `<p>${applyInlineFormatting(trimmedLine)}</p>\n`;
+            }
+        }
+    }
+
+    if (inList) {
+        html += '</ul>\n';
+    }
+
+    return html;
 }
